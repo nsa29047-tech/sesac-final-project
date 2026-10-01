@@ -24,6 +24,13 @@ def s(v):
     return v or None
 
 
+def to_bool(v):
+    """xlsx 셀의 True/False 또는 'True'/'False' 문자열 -> bool (bool('False') 는 True 라서 문자열을 따로 처리)"""
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes")
+    return bool(v)
+
+
 def video_id(url):
     return parse_qs(urlparse(url).query)["v"][0]
 
@@ -88,9 +95,16 @@ def main(xlsx, dsn):
     conn = psycopg2.connect(dsn)
     cur = conn.cursor()
     skipped_hours = []
+    skipped_rows = []
+    loaded = 0
 
     for values in rows[1:]:
         r = dict(zip(hdr, values))
+        if not s(r["google_cid"]) and not s(r.get("google_maps_url")):
+            # Google 매칭 실패(또는 가게 정보 없음) 행은 식당 마스터 키(google_cid)가 없어 적재할 수 없다.
+            skipped_rows.append(s(r["korean_name"]) or f"(가게 정보 없음) {r['video_url']}")
+            continue
+        loaded += 1
         vid = video_id(r["video_url"])
         types = [t.strip() for t in (s(r["google_types"]) or s(r["google_category_code"]) or "").split(",") if t.strip()]
 
@@ -99,21 +113,28 @@ def main(xlsx, dsn):
             ON CONFLICT (video_id) DO UPDATE SET title = EXCLUDED.title""",
                     (vid, r["video_url"], r["video_title"]))
 
+        gcid = s(r["google_cid"]) or cid(r["google_maps_url"])
+        maps_url = s(r.get("google_maps_url")) or f"https://maps.google.com/?cid={gcid}"
+
         cur.execute("""
-            INSERT INTO restaurants (google_cid, google_maps_url, name_official, name_ko, country_code,
+            INSERT INTO restaurants (google_cid, google_maps_url, google_place_id, name_official, name_ko,
+                country_code, latitude, longitude,
                 formatted_address, rating, rating_count, price_level, business_status, phone, website,
                 editorial_summary, primary_type, primary_type_label, category_broad, category_detail,
                 opening_hours_raw, places_fetched_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
             ON CONFLICT (google_cid) DO UPDATE SET
+                google_place_id = EXCLUDED.google_place_id,
+                latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude,
                 rating = EXCLUDED.rating, rating_count = EXCLUDED.rating_count,
                 price_level = EXCLUDED.price_level, business_status = EXCLUDED.business_status,
                 phone = EXCLUDED.phone, website = EXCLUDED.website,
                 opening_hours_raw = EXCLUDED.opening_hours_raw,
                 places_fetched_at = now(), updated_at = now()
             RETURNING restaurant_id""",
-                    (cid(r["google_maps_url"]), r["google_maps_url"], r["google_official_name"], s(r["korean_name"]),
-                     r["country_code"], s(r["google_formatted_address"]), r["google_rating"],
+                    (gcid, maps_url, s(r.get("google_place_id")), r["google_official_name"], s(r["korean_name"]),
+                     r["country_code"], s(r.get("google_latitude")), s(r.get("google_longitude")),
+                     s(r["google_formatted_address"]), r["google_rating"],
                      r["google_user_rating_count"], PRICE.get(r["google_price_level"]), s(r["google_business_status"]),
                      s(r["google_phone"]), s(r["google_website"]), s(r["google_editorial_summary"]),
                      s(r["google_category_code"]), s(r["google_category"]), s(r["category_broad"]),
@@ -140,30 +161,27 @@ def main(xlsx, dsn):
                                 [(rid, *p) for p in parsed])
 
         cur.execute("""
-            INSERT INTO michelin_status (restaurant_id, is_michelin, edition_type, latest_grade, is_active,
-                                         summary_badge, note)
-            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            INSERT INTO michelin_status (restaurant_id, is_michelin, edition_type, latest_grade, is_active, note)
+            VALUES (%s,%s,%s,%s,%s,%s)
             ON CONFLICT (restaurant_id) DO UPDATE SET is_michelin = EXCLUDED.is_michelin,
                 edition_type = EXCLUDED.edition_type, latest_grade = EXCLUDED.latest_grade,
-                is_active = EXCLUDED.is_active, summary_badge = EXCLUDED.summary_badge,
+                is_active = EXCLUDED.is_active,
                 note = EXCLUDED.note, checked_at = now()""",
-                    (rid, bool(r["is_michelin"]), r["edition_type"], r["latest_grade"], bool(r["is_active"]),
-                     s(r["summary_badge"]), s(r["note"])))
+                    (rid, to_bool(r["is_michelin"]), r["edition_type"], r["latest_grade"], to_bool(r["is_active"]),
+                     s(r["note"])))
 
         for item in (s(r["history"]) or "").split(";"):
             if item.strip():
-                year, grade = item.strip().split(":")
+                edition, grade = item.strip().rsplit(":", 1)
+                year = re.match(r"\d{4}", edition)  # '2017 홋카이도 특별판' 같은 에디션명은 앞 4자리 연도만 사용
+                if year is None:
+                    continue
                 cur.execute("""INSERT INTO michelin_records (restaurant_id, year, grade) VALUES (%s,%s,%s)
                                ON CONFLICT (restaurant_id, year) DO UPDATE SET grade = EXCLUDED.grade""",
-                            (rid, int(year), grade))
-
-        for url in (s(r["source_urls"]) or "").split(" | "):
-            if url.strip():
-                cur.execute("""INSERT INTO michelin_sources (restaurant_id, url) VALUES (%s,%s)
-                               ON CONFLICT DO NOTHING""", (rid, url.strip()))
+                            (rid, int(year.group()), grade))
 
     conn.commit()
-    print(f"loaded {len(rows) - 1} rows; hours not parsed for: {skipped_hours or 'none'}")
+    print(f"loaded {loaded} rows; skipped (google_cid 없음): {skipped_rows or 'none'}; hours not parsed for: {skipped_hours or 'none'}")
 
 
 if __name__ == "__main__":

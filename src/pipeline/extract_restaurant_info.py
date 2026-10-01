@@ -33,6 +33,9 @@ import re
 import csv
 import time
 import random
+import threading
+import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
 from typing import List, Optional, Dict, Any
 
@@ -87,6 +90,7 @@ class MichelinGrade(str, Enum):
     ONE_STAR = "1_STAR"
     BIB_GOURMAND = "BIB_GOURMAND"
     SELECTED = "SELECTED"
+    UNKNOWN = "UNKNOWN"  # 미슐랭 등재는 확인했지만 등급 근거를 찾지 못함
     NONE = "NONE"
 
 
@@ -95,20 +99,152 @@ class MichelinYearRecord(BaseModel):
     grade: MichelinGrade = Field(description="획득 등급")
 
 
-class MichelinInfo(BaseModel):
-    is_michelin: bool = Field(description="미슐랭 등재 이력이 있는지 여부")
+class MichelinLLMResult(BaseModel):
+    """LLM이 채우는 부분. 등재 여부·최신 등급·현재 유효 여부는 여기서 받지 않고 current_grade/history로 계산한다."""
     edition_type: EditionType = Field(description="가이드 종류 (REGULAR, SPECIAL, NONE)")
-    latest_grade: MichelinGrade = Field(description="가장 최근 획득한 등급")
+    current_grade: MichelinGrade = Field(
+        default=MichelinGrade.NONE,
+        description="검색 결과가 이 식당을 '현재' 미슐랭 가이드 등재 식당으로 보여 줄 때의 등급 (연도를 몰라도 됨). "
+                    "과거에만 등재됐거나 근거가 없으면 NONE."
+    )
+    current_evidence: str = Field(
+        default="", description="current_grade 의 근거가 된 검색 결과 문장을 그대로 인용. current_grade 가 NONE이면 빈 문자열."
+    )
     history: List[MichelinYearRecord] = Field(
         default_factory=list,
         description="정규 도시: 최근 5개년(2021~2025) 이력 / 특별판: 최근 2회 에디션 이력. "
-                    "검색 결과에 명시적으로 근거가 없는 연도는 절대 채우지 말 것."
+                    "검색 결과에 명시적으로 근거가 없는 연도는 절대 채우지 말 것. "
+                    "edition 은 반드시 4자리 연도로 시작할 것."
     )
-    is_active: bool = Field(description="현재 유효 여부 (정규는 최신년도 유지, 특별판은 마지막 특별판 등재)")
-    summary_badge: str = Field(description="요약 뱃지 (예: '2021-2025 5년 연속 2스타', '미등재')")
+    in_latest_special_edition: bool = Field(
+        default=False, description="특별판일 때만 사용: 마지막 특별판에 등재되었다는 근거가 있는지"
+    )
     michelin_url: Optional[str] = Field(default=None, description="공식 링크 (검색 결과 중 guide.michelin.com이 있으면 그 URL)")
     source_urls: List[str] = Field(default_factory=list, description="판정에 실제로 사용한 검색 결과 출처 URL 목록")
     reason: str = Field(description="판정 상세 근거. 근거가 부족하면 그 사실을 명시할 것")
+
+
+class MichelinInfo(BaseModel):
+    """최종 결과. is_michelin / latest_grade / is_active 는 current_grade 와 history 에서 계산한 파생값."""
+    is_michelin: bool
+    edition_type: EditionType
+    latest_grade: MichelinGrade
+    is_active: bool
+    history: List[MichelinYearRecord] = Field(default_factory=list)
+    michelin_url: Optional[str] = None
+    source_urls: List[str] = Field(default_factory=list)
+    reason: str = ""
+
+
+# 정규 에디션에서 "현재 등재 중"으로 볼 최소 연도. 새 가이드가 나오면 갱신한다.
+ACTIVE_FROM_YEAR = 2025
+
+
+def _edition_year(edition: str) -> Optional[int]:
+    m = re.match(r"\s*(\d{4})", edition)
+    return int(m.group(1)) if m else None
+
+
+# 근거 문장이 해당 등급을 실제로 말하는지 확인하는 패턴 (LLM이 사전 지식으로 등급을 채우는 것을 막는다)
+_GRADE_PATTERNS = {
+    MichelinGrade.THREE_STARS: r"\b(three|3)[\s-]+(michelin[\s-]+)?stars?\b",
+    MichelinGrade.TWO_STARS: r"\b(two|2)[\s-]+(michelin[\s-]+)?stars?\b",
+    MichelinGrade.ONE_STAR: r"\b(one|1)[\s-]+(michelin[\s-]+)?star\b",
+    MichelinGrade.BIB_GOURMAND: r"bib[\s-]+gourmand",
+    MichelinGrade.SELECTED: r"\bselected\b|the plate",
+}
+# 미슐랭 공식 사이트의 등급별 목록 페이지 URL (예: .../selection/germany/restaurants/3-stars-michelin)
+_LIST_PAGE_GRADES = [
+    (r"/3-stars?-michelin", MichelinGrade.THREE_STARS),
+    (r"/2-stars?-michelin", MichelinGrade.TWO_STARS),
+    (r"/1-stars?-michelin", MichelinGrade.ONE_STAR),
+    (r"/bib-gourmand", MichelinGrade.BIB_GOURMAND),
+]
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").lower()
+
+
+def grade_from_list_pages(results: List[Dict[str, str]], official_name: str) -> Optional[MichelinGrade]:
+    """공식 등급별 목록 페이지에 이 식당명이 있으면 그 등급을 확정한다. 여러 개면 가장 높은 등급."""
+    name = _norm(official_name)
+    name_re = re.compile(r"(?<![a-z0-9])" + re.escape(name) + r"(?![a-z0-9])") if name else None
+    found = []
+    for r in results:
+        url = r.get("url") or ""
+        text = _norm(r.get("raw_content") or r.get("content") or "")
+        if name_re is None or not name_re.search(text):
+            continue
+        # 1스타+2스타를 함께 거른 필터 페이지처럼 URL에 등급 구간이 둘 이상이면 등급을 확정할 수 없으므로 건너뛴다.
+        grades = [grade for pattern, grade in _LIST_PAGE_GRADES if re.search(pattern, url)]
+        if len(grades) == 1:
+            found.append(grades[0])
+    order = [MichelinGrade.THREE_STARS, MichelinGrade.TWO_STARS, MichelinGrade.ONE_STAR, MichelinGrade.BIB_GOURMAND]
+    return next((g for g in order if g in found), None)
+
+
+def _verified_grade(llm: MichelinLLMResult, context: str) -> MichelinGrade:
+    """LLM 등급을 근거 문장으로 검증한다. 문장이 검색 결과 원문에 없거나 등급 표현이 없으면 UNKNOWN."""
+    ev = _norm(llm.current_evidence)
+    pattern = _GRADE_PATTERNS.get(llm.current_grade)
+    if ev and ev in _norm(context) and pattern and re.search(pattern, ev, re.I):
+        return llm.current_grade
+    return MichelinGrade.UNKNOWN
+
+
+def build_michelin_info(llm: MichelinLLMResult, context: str = "",
+                        list_grade: Optional[MichelinGrade] = None) -> MichelinInfo:
+    """current_grade(근거 검증)·목록 페이지 등급·history 에서 등재 여부·최신 등급·현재 유효 여부를 계산한다.
+
+    history 는 연도 근거가 있는 항목만 남긴다(연도를 알 수 없거나 등급이 NONE/UNKNOWN이면 버림).
+    current_grade 는 연도 없이 '현재 등재 중'이라는 근거만 있는 경우를 위한 것이라 history 에는 넣지 않는다.
+    """
+    dated = []
+    for h in llm.history:
+        year = _edition_year(h.edition)
+        if year is not None and h.grade not in (MichelinGrade.NONE, MichelinGrade.UNKNOWN):
+            dated.append((year, h))
+    dated.sort(key=lambda x: x[0])
+    history = [h for _, h in dated]
+
+    llm_claims_current = llm.current_grade != MichelinGrade.NONE and bool(llm.current_evidence.strip())
+    has_current = llm_claims_current or list_grade is not None
+
+    if not history and not has_current:
+        return MichelinInfo(
+            is_michelin=False, edition_type=EditionType.NONE, latest_grade=MichelinGrade.NONE,
+            is_active=False, michelin_url=None, source_urls=[], reason=llm.reason,
+        )
+
+    edition_type = llm.edition_type if llm.edition_type != EditionType.NONE else EditionType.REGULAR
+    reason = llm.reason
+    if has_current:
+        if list_grade is not None:
+            latest_grade = list_grade
+            reason = f"{reason} [공식 등급별 목록 페이지에서 확인: {list_grade.value}]"
+        else:
+            latest_grade = _verified_grade(llm, context)
+            reason = f"{reason} [현재 등재 근거] {llm.current_evidence.strip()}"
+        is_active = True
+    else:
+        latest_year, latest = dated[-1]
+        latest_grade = latest.grade
+        if edition_type == EditionType.SPECIAL:
+            is_active = llm.in_latest_special_edition
+        else:
+            is_active = latest_year >= ACTIVE_FROM_YEAR
+    return MichelinInfo(
+        is_michelin=True, edition_type=edition_type, latest_grade=latest_grade, is_active=is_active,
+        history=history, michelin_url=llm.michelin_url, source_urls=llm.source_urls, reason=reason,
+    )
+
+
+def michelin_fallback(reason: str) -> MichelinInfo:
+    return MichelinInfo(
+        is_michelin=False, edition_type=EditionType.NONE, latest_grade=MichelinGrade.NONE,
+        is_active=False, reason=reason,
+    )
 
 
 class StoreInfo(BaseModel):
@@ -268,13 +404,91 @@ def extract_cid(maps_url: Optional[str]) -> str:
     return match.group(1) if match else ""
 
 
-def search_restaurant_google(korean_name: str, address: Optional[str] = None, country_code: str = "KR") -> Optional[Dict[str, Any]]:
-    if not GOOGLE_PLACES_API_KEY:
+PLACES_CANDIDATES = 5  # 후보를 여러 개 받아 LLM이 고른다 (1개만 받으면 인접한 다른 장소가 그대로 채택됨)
+
+
+class PlaceChoice(BaseModel):
+    chosen_index: Optional[int] = Field(
+        default=None, description="후보 번호(0부터). 어느 후보도 같은 장소가 아니면 null"
+    )
+    reason: str = Field(description="선택 또는 거부 이유 (한 문장)")
+
+
+def choose_place(korean_name: str, address: Optional[str], country_code: str,
+                 places: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Places 후보 중 영상에서 소개한 식당과 같은 장소를 고른다. 없으면 None."""
+    lines = []
+    for i, p in enumerate(places):
+        lines.append(
+            f"[{i}] 이름: {p.get('displayName', {}).get('text')} / 주소: {p.get('formattedAddress')} / "
+            f"유형: {p.get('primaryTypeDisplayName', {}).get('text') or p.get('primaryType')} / "
+            f"평점 수: {p.get('userRatingCount')}"
+        )
+    prompt = f"""
+유튜브 영상 소개란에서 추출한 식당과 같은 장소를 아래 Google Places 후보에서 고르세요.
+
+[추출한 상호명(한국어 표기)]: {korean_name}
+[추출한 주소]: {address or '없음'}
+[국가]: {country_code}
+
+[후보]
+{chr(10).join(lines)}
+
+판단 기준:
+- 한국어 상호명은 외국어 이름의 발음 표기입니다. 현지어·영문 이름과 발음이 대응하면 같은 이름으로 보세요.
+- 주소가 같거나 가까워도 이름이 다르면 다른 장소입니다. 같은 건물의 호텔과 그 안의 식당은 다른 장소입니다.
+- 같은 거리라도 번지수가 다르면 다른 장소입니다. 이름이 발음상 대응하지 않는 후보는 고르지 마세요.
+- 소개된 것이 식당인데 후보가 숙소(호텔 등)뿐이면 선택하지 마세요. 상호명 자체가 호텔이면 호텔도 가능합니다.
+- 지점명이 있으면(예: 잠실방이점) 그 지점을 고르세요.
+- 확신할 수 없으면 null 로 두세요. 틀린 장소를 고르는 것보다 매칭 실패가 낫습니다.
+"""
+    response = client.beta.chat.completions.parse(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "너는 식당 이름과 주소를 지도 데이터와 정확히 대조하는 전문가야."},
+            {"role": "user", "content": prompt},
+        ],
+        response_format=PlaceChoice,
+    )
+    choice = response.choices[0].message.parsed
+    if choice is None or choice.chosen_index is None or not (0 <= choice.chosen_index < len(places)):
+        print(f"    ⚠️ Google 후보 {len(places)}개 모두 불일치: {choice.reason if choice else '파싱 실패'}")
+        return None
+    return places[choice.chosen_index]
+
+
+class LocalName(BaseModel):
+    local_name: Optional[str] = Field(
+        default=None, description="현지어 또는 영문 원래 상호명. 확신이 없으면 null"
+    )
+
+
+def guess_local_name(korean_name: str, address: Optional[str], country_code: str) -> Optional[str]:
+    """한국어 발음 표기에서 현지어/영문 원래 이름을 추정한다 (예: 오스테리아 델 친기알레 비앙코 -> Osteria del Cinghiale Bianco)."""
+    prompt = f"""
+아래 한국어 식당 이름의 현지어 또는 영문 원래 상호명을 적으세요. 지도 검색에 쓰입니다.
+[한국어 표기]: {korean_name}
+[주소]: {address or '없음'}
+[국가]: {country_code}
+확신이 없으면 null 로 두세요. 지어내지 마세요.
+"""
+    try:
+        response = client.beta.chat.completions.parse(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "너는 외국 식당의 한국어 표기를 원래 이름으로 복원하는 전문가야."},
+                {"role": "user", "content": prompt},
+            ],
+            response_format=LocalName,
+        )
+        parsed = response.choices[0].message.parsed
+        return parsed.local_name.strip() if parsed and parsed.local_name else None
+    except Exception:
         return None
 
-    query = f"{korean_name} {address}".strip() if address else korean_name
-    url = "https://places.googleapis.com/v1/places:searchText"
 
+def places_text_search(query: str, country_code: str) -> List[Dict[str, Any]]:
+    url = "https://places.googleapis.com/v1/places:searchText"
     headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": GOOGLE_PLACES_API_KEY,
@@ -293,7 +507,7 @@ def search_restaurant_google(korean_name: str, address: Optional[str] = None, co
             # "places.servesCoffee,places.servesDessert,places.servesCocktails"
         )
     }
-    payload = {"textQuery": query, "maxResultCount": 1}
+    payload = {"textQuery": query, "maxResultCount": PLACES_CANDIDATES}
     if country_code:
         payload["regionCode"] = country_code.strip().upper()
 
@@ -301,18 +515,39 @@ def search_restaurant_google(korean_name: str, address: Optional[str] = None, co
         response = requests.post(url, headers=headers, json=payload, timeout=10)
     except requests.RequestException as e:
         print(f"    ⚠️ Google Places 요청 실패: {e}")
-        return None
+        return []
 
     if response.status_code != 200:
         # Places API (New)가 활성화 안 되어 있거나 키 제한 문제일 수 있어 원인 확인용으로 출력
         print(f"    ⚠️ Google Places 응답 오류 ({response.status_code}): {response.text[:300]}")
+        return []
+    return response.json().get("places", [])
+
+
+def search_restaurant_google(korean_name: str, address: Optional[str] = None, country_code: str = "KR") -> Optional[Dict[str, Any]]:
+    if not GOOGLE_PLACES_API_KEY:
         return None
 
-    places = response.json().get("places", [])
+    queries = [f"{korean_name} {address}".strip() if address else korean_name]
+    if country_code.strip().upper() != "KR":
+        # 외국 식당은 한국어 발음 표기로는 Google이 못 찾는 경우가 많아 현지어 이름으로도 검색한다.
+        local = guess_local_name(korean_name, address, country_code)
+        if local and local.lower() != korean_name.lower():
+            queries.append(f"{local} {address}".strip() if address else local)
+
+    places: List[Dict[str, Any]] = []
+    seen_ids = set()
+    for q in queries:
+        for p in places_text_search(q, country_code):
+            if p.get("id") not in seen_ids:
+                seen_ids.add(p.get("id"))
+                places.append(p)
     if not places:
         return None
 
-    place = places[0]
+    place = choose_place(korean_name, address, country_code, places)
+    if place is None:
+        return None
 
     regular_hours = place.get("regularOpeningHours", {}) or {}
     current_hours = place.get("currentOpeningHours", {}) or {}
@@ -333,6 +568,7 @@ def search_restaurant_google(korean_name: str, address: Optional[str] = None, co
         "lat": place.get("location", {}).get("latitude"),
         "lng": place.get("location", {}).get("longitude"),
         "cid": extract_cid(place.get("googleMapsUri")),
+        "maps_url": place.get("googleMapsUri", ""),
         "business_status": place.get("businessStatus", ""),
         "price_level": place.get("priceLevel", ""),
         "phone": place.get("internationalPhoneNumber") or place.get("nationalPhoneNumber", ""),
@@ -383,13 +619,9 @@ def tavily_search(
     return results
 
 
-def check_michelin_status(official_name: str, korean_name: str, address: Optional[str] = None, country_code: str = "KR") -> MichelinInfo:
+def check_michelin_status_tavily(official_name: str, korean_name: str, address: Optional[str] = None, country_code: str = "KR") -> MichelinInfo:
     if not TAVILY_API_KEY:
-        return MichelinInfo(
-            is_michelin=False, edition_type=EditionType.NONE,
-            latest_grade=MichelinGrade.NONE, is_active=False,
-            summary_badge="미등재", reason="TAVILY_API_KEY 없음"
-        )
+        return michelin_fallback("TAVILY_API_KEY 없음")
 
     all_results: List[Dict[str, str]] = []
     try:
@@ -415,19 +647,18 @@ def check_michelin_status(official_name: str, korean_name: str, address: Optiona
                 max_results=5,
             )
     except Exception as e:
-        return MichelinInfo(
-            is_michelin=False, edition_type=EditionType.NONE,
-            latest_grade=MichelinGrade.NONE, is_active=False,
-            summary_badge="조회 오류", reason=f"Tavily 검색 에러: {e}"
-        )
+        return michelin_fallback(f"Tavily 검색 에러: {e}")
 
-    source_urls = [r["url"] for r in all_results if r.get("url")]
+    searched_urls = {r["url"] for r in all_results if r.get("url")}
 
     def _best_text(r: Dict[str, str]) -> str:
         # raw_content(전체 텍스트)가 있으면 그쪽을 우선 쓰고, 없으면 짧은 스니펫(content)로 대체
         raw = (r.get("raw_content") or "").strip()
         if raw:
-            return raw[:RAW_CONTENT_TRUNCATE]
+            # 페이지 앞부분은 네비게이션인 경우가 많아, 식당명이 처음 나오는 위치 근처부터 잘라 쓴다.
+            idx = raw.lower().find(official_name.lower())
+            start = max(0, idx - 300) if idx >= 0 else 0
+            return raw[start:start + RAW_CONTENT_TRUNCATE]
         return r.get("content", "")
 
     context = "\n\n".join(
@@ -437,18 +668,28 @@ def check_michelin_status(official_name: str, korean_name: str, address: Optiona
     prompt = f"""
 당신은 전 세계 미슐랭 가이드 레스토랑 데이터 분석 전문가입니다.
 아래 검색 결과만 근거로, 식당 [{official_name} / 한국명: {korean_name}] (주소: {address or '미지정'}, 국가: {country_code})의
-미슐랭 등재 이력을 판별하세요.
+미슐랭 등재 정보를 두 단계로 판별하세요.
 
-[중요] 검색 결과에 명시적으로 나와 있지 않은 연도/등급은 절대로 추측해서 채우지 마세요.
-근거가 부족하면 history를 비워두고, reason에 "근거 부족"이라고 명시하세요.
-확신이 서지 않으면 is_michelin=False, edition_type=NONE으로 판정하는 쪽을 택하세요.
+[1단계: 현재 등재 등급 -> current_grade, current_evidence]
+검색 결과가 이 식당을 미슐랭 가이드에 등재된 식당으로 소개하면(예: "retained its Three Michelin Stars",
+"a MICHELIN Guide restaurant", 공식 사이트의 '3 Stars' 같은 등급별 목록에 이 식당이 나옴, 상세 페이지에 등급 표시)
+그 등급을 current_grade 에 넣고, 근거가 된 문장을 current_evidence 에 그대로 인용하세요. 연도를 몰라도 됩니다.
+등급 없이 'Selected'(가이드 수록)만 확인되면 SELECTED, 빕 구르망이면 BIB_GOURMAND 입니다.
+과거에만 등재되었다거나 제외·폐점을 언급하면 NONE 입니다.
+인용할 문장을 찾을 수 없으면 NONE 으로 두세요.
 
-[이력 수집 기준]
-1. 정규 도시 (서울, 도쿄, 파리, 뉴욕 등): 검색 결과에서 확인되는 연도만 history에 채우고(최대 2021~2025),
-   최신년도(2024/2025)에 유지 중이라는 근거가 있으면 is_active = True
-2. 비정기 특별판 지역 (삿포로/홋카이도, 규슈 등): 검색 결과에서 확인되는 특별판 이력만 채우고,
-   마지막 특별판에 등재되었다는 근거가 있으면 is_active = True
-3. 미등재 또는 근거 부족: is_michelin = False, edition_type = NONE, latest_grade = NONE, summary_badge = "미등재"
+[2단계: 연도별 이력 -> history]
+검색 결과에 연도와 등급이 함께 명시된 경우에만 history 에 넣으세요. edition 은 4자리 연도로 시작합니다
+(예: "2025", "2017 홋카이도 특별판"). 연도가 명시되지 않았다면 지어내지 말고 history 는 비워 두세요.
+- 정규 도시 (서울, 도쿄, 파리, 뉴욕 등): 확인되는 연도만 (최대 2021~2025)
+- 비정기 특별판 지역 (삿포로/홋카이도, 규슈 등): 확인되는 특별판만 넣고, 마지막 특별판 등재 근거가 있으면
+  in_latest_special_edition = True
+
+[공통 규칙]
+- 이 식당(이름·주소·도시)에 대한 내용만 근거로 쓰세요. 같은 이름의 다른 지점·다른 도시 식당 페이지는
+  근거로 쓰지 말고 source_urls 에도 넣지 마세요.
+- 어떤 등급도 찾지 못하면 edition_type = NONE, current_grade = NONE, history 비움, reason 에 "근거 부족"을 적으세요.
+- 등재 여부·최신 등급·유효 여부는 코드가 계산하므로 따로 답하지 않습니다.
 
 [검색 데이터]:
 {context if context else "검색 결과 없음"}
@@ -460,21 +701,151 @@ def check_michelin_status(official_name: str, korean_name: str, address: Optiona
             {"role": "system", "content": "너는 미슐랭 가이드 공식 데이터 분석 AI야. 근거 없는 추측은 하지 않아."},
             {"role": "user", "content": prompt}
         ],
-        response_format=MichelinInfo,
+        response_format=MichelinLLMResult,
     )
-    result = response.choices[0].message.parsed
-    if result is None:
-        return MichelinInfo(
-            is_michelin=False, edition_type=EditionType.NONE,
-            latest_grade=MichelinGrade.NONE, is_active=False,
-            summary_badge="판정 실패", reason="LLM 파싱 실패"
-        )
+    llm_result = response.choices[0].message.parsed
+    if llm_result is None:
+        return michelin_fallback("LLM 파싱 실패")
+    result = build_michelin_info(
+        llm_result, context=context, list_grade=grade_from_list_pages(all_results, official_name)
+    )
 
-    # LLM이 '등재'로 판정했는데 source_urls를 못 채웠을 경우에만 우리가 검색했던 출처로 보강.
-    # is_michelin=False(미등재)일 때는 채우지 않음 - 그래야 "미등재는 근거 URL도 없다"는 의미가 유지됨.
-    if result.is_michelin and not result.source_urls:
-        result.source_urls = source_urls
+    # 검색 결과 전체로 보강하지 않는다(다른 지역 식당 페이지가 섞임). LLM이 고른 URL 중 실제 검색 결과에 있던 것만 남긴다.
+    result.source_urls = [u for u in result.source_urls if u in searched_urls]
     return result
+
+
+# -------------------------------------------------------------
+# 5-1. [Step 4 기본] 미슐랭 판별: Parse(guide.michelin.com) API
+# -------------------------------------------------------------
+# API는 "현재" 등급(distinction)만 주고 연도별 이력은 주지 않는다. 그래서 history 는 비워 두고,
+# 이력은 근거가 확인된 경우에만 따로 채운다.
+# 같은 이름의 다른 도시 지점이 검색되므로 이름뿐 아니라 도시(또는 거리 주소)까지 일치하는 후보만 채택한다.
+MICHELIN_API_LIMIT = 5            # 검색 1회당 가져올 후보 수. 호출마다 크레딧을 쓴다.
+MICHELIN_MIN_INTERVAL = 12.5      # 무료 플랜 분당 5회 제한을 지키는 호출 간격(초). 워커 간에 공유한다.
+MICHELIN_TAVILY_FALLBACK = False  # True 면 API에서 일치 후보가 없을 때 기존 Tavily 경로로 한 번 더 확인한다(--michelin-fallback).
+
+_DISTINCTION_TO_GRADE = {
+    "3-stars-michelin": MichelinGrade.THREE_STARS,
+    "2-stars-michelin": MichelinGrade.TWO_STARS,
+    "1-star-michelin": MichelinGrade.ONE_STAR,
+    "bib-gourmand": MichelinGrade.BIB_GOURMAND,
+    "the-plate-michelin": MichelinGrade.SELECTED,
+}
+_michelin_client = None
+_michelin_lock = threading.Lock()
+_michelin_last_call = 0.0
+
+
+def _name_key(text: Optional[str]) -> str:
+    """이름 비교용 정규화: 악센트 제거, 소문자, 문자·숫자만 남긴다."""
+    text = unicodedata.normalize("NFKD", text or "")
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    return re.sub(r"[^0-9a-z぀-ヿ㐀-鿿가-힣]", "", text.lower())
+
+
+def _name_matches(a: Optional[str], b: Optional[str]) -> bool:
+    ka, kb = _name_key(a), _name_key(b)
+    if not ka or not kb:
+        return False
+    if ka == kb:
+        return True
+    shorter, longer = sorted((ka, kb), key=len)
+    return len(shorter) >= 4 and shorter in longer   # "Born and Bred" <-> "Born and Bred Busan"
+
+
+def _street_matches(street: Optional[str], address: Optional[str]) -> bool:
+    """미슐랭 거리 주소의 숫자 토큰이 모두, 영문 토큰이 절반 이상 Places 주소에 있으면 같은 곳으로 본다."""
+    s_tokens = re.findall(r"[a-z0-9]+", _name_key_ascii(street))
+    a_tokens = set(re.findall(r"[a-z0-9]+", _name_key_ascii(address)))
+    digits = [t for t in s_tokens if t.isdigit()]
+    words = [t for t in s_tokens if not t.isdigit() and len(t) >= 3]
+    if not digits or not all(d in a_tokens for d in digits):
+        return False
+    return not words or sum(w in a_tokens for w in words) / len(words) >= 0.5
+
+
+def _name_key_ascii(text: Optional[str]) -> str:
+    text = unicodedata.normalize("NFKD", text or "")
+    return "".join(c for c in text if not unicodedata.combining(c)).lower()
+
+
+def _location_matches(r, address: Optional[str]) -> bool:
+    """미슐랭의 도시나 지역 이름이 Places 주소에 들어 있으면 같은 지역으로 본다."""
+    addr = _name_key(address)
+    for place in (r.city.name, r.region.name):
+        if _name_key(place) and _name_key(place) in addr:
+            return True
+    return False
+
+
+def pick_michelin_candidate(candidates: list, official_name: str, korean_name: str,
+                            address: Optional[str], country_code: str):
+    """검색 결과 중 같은 식당으로 볼 수 있는 후보를 고른다. 없으면 None. 거리 일치 > 이름 완전 일치 > 검색 순위 순."""
+    best, best_score = None, -1
+    for r in candidates:
+        name_ok = _name_matches(r.name, official_name) or _name_matches(r.name, korean_name)
+        loc_ok = _location_matches(r, address)
+        street_ok = _street_matches(getattr(r, "street", None), address)
+        same_country = bool(r.country and r.country.code and r.country.code.upper() == country_code.strip().upper())
+        if not ((name_ok and loc_ok) or (street_ok and loc_ok) or (name_ok and street_ok)
+                or (name_ok and same_country and _name_key(r.name) == _name_key(official_name))):
+            continue
+        score = (2 if street_ok else 0) + (1 if _name_key(r.name) == _name_key(official_name) else 0)
+        if score > best_score:
+            best, best_score = r, score
+    return best
+
+
+def _michelin_search(query: str):
+    """Parse API 검색(분당 호출 수 제한을 지킨다). 오류는 그대로 올려서 호출부가 기록하게 한다."""
+    global _michelin_client, _michelin_last_call
+    if not os.getenv("MICHELIN_GUIDE_API_KEY"):
+        raise RuntimeError("MICHELIN_GUIDE_API_KEY 없음")
+    with _michelin_lock:
+        if _michelin_client is None:
+            os.environ.setdefault("PARSE_API_KEY", os.environ["MICHELIN_GUIDE_API_KEY"])
+            from parse_apis.guide_michelin_com_api import MichelinGuide
+            _michelin_client = MichelinGuide()
+        wait = MICHELIN_MIN_INTERVAL - (time.time() - _michelin_last_call)
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            return list(_michelin_client.restaurants.search(query=query, limit=MICHELIN_API_LIMIT))
+        finally:
+            _michelin_last_call = time.time()
+            meta = getattr(_michelin_client, "last_meta", None)
+            remaining = getattr(meta, "credits_remaining", None)
+            if remaining is not None:
+                print(f"    (Michelin API 남은 크레딧: {remaining})")
+
+
+def check_michelin_status_api(official_name: str, korean_name: str, address: Optional[str] = None,
+                              country_code: str = "KR") -> MichelinInfo:
+    candidates = _michelin_search(official_name)
+    picked = pick_michelin_candidate(candidates, official_name, korean_name, address, country_code)
+    if picked is None:
+        return MichelinInfo(
+            is_michelin=False, edition_type=EditionType.NONE, latest_grade=MichelinGrade.NONE, is_active=False,
+            reason=f"Michelin API 검색 결과 {len(candidates)}건 중 이름·도시가 일치하는 식당 없음",
+        )
+    slug = picked.distinction.slug if picked.distinction else None
+    grade = _DISTINCTION_TO_GRADE.get(slug, MichelinGrade.UNKNOWN)
+    url = f"https://guide.michelin.com/en/{picked.region.slug}/{picked.city.slug}/restaurant/{picked.slug}"
+    return MichelinInfo(
+        is_michelin=True, edition_type=EditionType.REGULAR, latest_grade=grade, is_active=True,
+        michelin_url=url, source_urls=[url],
+        reason=f"Michelin API: {picked.name} / {picked.city.name} / distinction={slug}",
+    )
+
+
+def check_michelin_status(official_name: str, korean_name: str, address: Optional[str] = None,
+                          country_code: str = "KR") -> MichelinInfo:
+    """Parse API로 현재 등급을 확정한다. 일치 후보가 없을 때만, 옵션이 켜져 있으면 기존 Tavily 경로로 한 번 더 본다."""
+    info = check_michelin_status_api(official_name, korean_name, address, country_code)
+    if not info.is_michelin and MICHELIN_TAVILY_FALLBACK:
+        return check_michelin_status_tavily(official_name, korean_name, address, country_code)
+    return info
 
 
 # -------------------------------------------------------------
@@ -484,136 +855,175 @@ FIELDNAMES = [
     "video_url", "video_title",
     "korean_name", "address", "country_code",
     "google_official_name", "google_formatted_address",
-    "google_rating", "google_user_rating_count", "google_cid",
+    "google_rating", "google_user_rating_count", "google_cid", "google_maps_url", "google_place_id",
+    "google_latitude", "google_longitude",
     "google_category", "google_category_code", "google_types",
     "category_broad", "category_detail",
     "google_business_status", "google_price_level",
     "google_phone", "google_website", "google_editorial_summary",
     "google_opening_hours", "google_open_now",
     "is_michelin", "edition_type", "latest_grade",
-    "is_active", "summary_badge", "history",
+    "is_active", "history",
     "source_urls", "note",
 ]
 
 
-def main():
-    if not os.path.exists(INPUT_FILE):
-        print(f"오류: {INPUT_FILE} 파일이 없습니다.")
-        return
+def process_video(url: str, v_idx: int, total: int) -> Optional[List[Dict[str, Any]]]:
+    """영상 1개를 처리해 CSV 행 목록을 반환한다. 일시적 오류(영상 조회/상호명 추출 실패)면 None (기록하지 않아 재실행 시 재시도)."""
+    tag = f"[{v_idx}/{total}]"
+    print(f"{tag} 시작: {url}")
 
-    with open(INPUT_FILE, "r", encoding="utf-8") as f:
-        urls = [line.strip() for line in f if line.strip()]
+    try:
+        video_data = get_youtube_description(url)
+    except Exception as e:
+        print(f"{tag} ⚠️ 영상 정보 조회 실패(기록하지 않음, 재실행 시 재시도): {e}")
+        return None
 
-    print(f"총 {len(urls)}개 영상을 처리합니다...\n")
+    time.sleep(random.uniform(*YTDLP_DELAY))
+    print(f"{tag} 제목: {video_data['title']}")
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8-sig", newline="") as out_f:
+    try:
+        extracted = extract_stores_from_description(video_data['title'], video_data['description'])
+    except Exception as e:
+        print(f"{tag} ⚠️ 상호명 추출 실패(기록하지 않음, 재실행 시 재시도): {e}")
+        return None
+
+    if not extracted.has_store_info or not extracted.stores:
+        print(f"{tag} ℹ️ 가게 정보 없음")
+        return [{**{k: "" for k in FIELDNAMES}, "video_url": url,
+                 "video_title": video_data['title'], "note": "가게 정보 없음"}]
+
+    rows = []
+    for store in extracted.stores:
+        row = {k: "" for k in FIELDNAMES}
+        row["video_url"] = url
+        row["video_title"] = video_data['title']
+        row["korean_name"] = store.korean_name
+        row["address"] = store.address
+        row["country_code"] = store.country_code
+
+        print(f"{tag} 식당: {store.korean_name} ({store.country_code}) / {store.address}")
+
+        g_info = None
+        try:
+            g_info = search_restaurant_google(store.korean_name, store.address, store.country_code)
+        except Exception as e:
+            row["note"] += f"Google 조회 실패: {e}; "
+
+        official_name = store.korean_name
+        if g_info:
+            official_name = g_info["official_local_name"] or store.korean_name
+            row["google_official_name"] = g_info.get("official_local_name", "")
+            row["google_formatted_address"] = g_info.get("formatted_address", "")
+            row["google_rating"] = g_info.get("rating", "")
+            row["google_user_rating_count"] = g_info.get("user_rating_count", "")
+            row["google_cid"] = g_info.get("cid", "")
+            row["google_maps_url"] = g_info.get("maps_url", "")
+            row["google_place_id"] = g_info.get("place_id") or ""
+            row["google_latitude"] = g_info["lat"] if g_info.get("lat") is not None else ""
+            row["google_longitude"] = g_info["lng"] if g_info.get("lng") is not None else ""
+            row["google_category"] = g_info.get("category", "")
+            row["google_category_code"] = g_info.get("category_code", "")
+            row["google_types"] = g_info.get("types", "")
+            row["google_business_status"] = g_info.get("business_status", "")
+            row["google_price_level"] = g_info.get("price_level", "")
+            row["google_phone"] = g_info.get("phone", "")
+            row["google_website"] = g_info.get("website", "")
+            row["google_editorial_summary"] = g_info.get("editorial_summary", "")
+            row["google_opening_hours"] = g_info.get("opening_hours", "")
+            row["google_open_now"] = g_info.get("open_now", "")
+            print(f"{tag}   구글 공식명: {official_name} / {g_info.get('formatted_address')} / {g_info.get('category')}")
+        else:
+            row["note"] += "Google 매칭 실패(또는 후보 불일치): 사람이 확인 필요; "
+            print(f"{tag}   ⚠️ Google Places 매칭 실패 ({store.korean_name})")
+
+        try:
+            m_info = check_michelin_status(
+                official_name=official_name,
+                korean_name=store.korean_name,
+                address=g_info["formatted_address"] if g_info else store.address,
+                country_code=store.country_code,
+            )
+        except Exception as e:
+            row["note"] += f"미슐랭 조회 실패: {e}; "
+            m_info = michelin_fallback(str(e))
+
+        row["is_michelin"] = m_info.is_michelin
+        row["edition_type"] = m_info.edition_type.value
+        row["latest_grade"] = m_info.latest_grade.value
+        row["is_active"] = m_info.is_active
+        row["history"] = "; ".join(f"{h.edition}:{h.grade.value}" for h in m_info.history)
+        row["source_urls"] = " | ".join(m_info.source_urls)
+        print(f"{tag}   미슐랭: {m_info.latest_grade.value} (등재={m_info.is_michelin}, 현재유효={m_info.is_active})")
+
+        rows.append(row)
+        time.sleep(random.uniform(*STORE_DELAY))
+    return rows
+
+
+def main(output_file: str = OUTPUT_FILE, limit: Optional[int] = None, workers: int = 3,
+         video_ids: Optional[List[str]] = None):
+    if video_ids:
+        urls = [f"https://www.youtube.com/watch?v={v}" for v in video_ids]
+    else:
+        if not os.path.exists(INPUT_FILE):
+            print(f"오류: {INPUT_FILE} 파일이 없습니다.")
+            return
+
+        with open(INPUT_FILE, "r", encoding="utf-8") as f:
+            urls = [line.strip() for line in f if line.strip()]
+
+    if limit:
+        urls = urls[:limit]
+
+    # 이어받기: 출력 파일에 이미 기록된 영상은 건너뛰고 뒤에 이어서 쓴다 (영상 단위).
+    # 처음부터 다시 하려면 출력 파일을 지우거나 --output 으로 다른 경로를 지정한다.
+    done_urls = set()
+    resume = os.path.exists(output_file) and os.path.getsize(output_file) > 0
+    if resume:
+        with open(output_file, "r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames != FIELDNAMES:
+                print(f"오류: {output_file} 의 컬럼이 현재 스키마와 다릅니다. 다른 --output 을 쓰거나 파일을 옮겨 주세요.")
+                return
+            done_urls = {row["video_url"] for row in reader}
+
+    todo = [(i, u) for i, u in enumerate(urls, start=1) if u not in done_urls]
+    print(f"대상 {len(urls)}개 중 이미 처리된 {len(urls) - len(todo)}개는 건너뛰고, {len(todo)}개를 워커 {workers}개로 처리합니다.")
+
+    failed = 0
+    started = time.time()
+    with open(output_file, "a" if resume else "w", encoding="utf-8-sig", newline="") as out_f:
         writer = csv.DictWriter(out_f, fieldnames=FIELDNAMES)
-        writer.writeheader()
+        if not resume:
+            writer.writeheader()
 
-        for v_idx, url in enumerate(urls, start=1):
-            print("=" * 70)
-            print(f"🎬 [{v_idx}/{len(urls)}] {url}")
-
-            try:
-                video_data = get_youtube_description(url)
-            except Exception as e:
-                print(f"    ⚠️ 영상 정보 조회 실패: {e}")
-                writer.writerow({**{k: "" for k in FIELDNAMES}, "video_url": url, "note": f"영상 조회 실패: {e}"})
-                continue
-
-            time.sleep(random.uniform(*YTDLP_DELAY))
-            print(f"📌 제목: {video_data['title']}")
-
-            try:
-                extracted = extract_stores_from_description(video_data['title'], video_data['description'])
-            except Exception as e:
-                print(f"    ⚠️ 상호명 추출 실패: {e}")
-                writer.writerow({**{k: "" for k in FIELDNAMES}, "video_url": url,
-                                  "video_title": video_data['title'], "note": f"추출 실패: {e}"})
-                continue
-
-            if not extracted.has_store_info or not extracted.stores:
-                print("    ℹ️ 가게 정보 없음")
-                writer.writerow({**{k: "" for k in FIELDNAMES}, "video_url": url,
-                                  "video_title": video_data['title'], "note": "가게 정보 없음"})
-                continue
-
-            for store in extracted.stores:
-                row = {k: "" for k in FIELDNAMES}
-                row["video_url"] = url
-                row["video_title"] = video_data['title']
-                row["korean_name"] = store.korean_name
-                row["address"] = store.address
-                row["country_code"] = store.country_code
-
-                print(f"\n  🇰🇷 {store.korean_name} ({store.country_code}) / 📍 {store.address}")
-
-                g_info = None
+        # 영상 단위로 병렬 처리한다. CSV 쓰기는 이 메인 스레드에서만 하므로 파일이 섞이지 않는다.
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = {ex.submit(process_video, u, i, len(urls)): u for i, u in todo}
+            for done_count, fut in enumerate(as_completed(futures), start=1):
                 try:
-                    g_info = search_restaurant_google(store.korean_name, store.address, store.country_code)
+                    rows = fut.result()
                 except Exception as e:
-                    row["note"] += f"Google 조회 실패: {e}; "
-
-                official_name = store.korean_name
-                if g_info:
-                    official_name = g_info["official_local_name"] or store.korean_name
-                    row["google_official_name"] = g_info.get("official_local_name", "")
-                    row["google_formatted_address"] = g_info.get("formatted_address", "")
-                    row["google_rating"] = g_info.get("rating", "")
-                    row["google_user_rating_count"] = g_info.get("user_rating_count", "")
-                    row["google_cid"] = g_info.get("cid", "")
-                    row["google_category"] = g_info.get("category", "")
-                    row["google_category_code"] = g_info.get("category_code", "")
-                    row["google_types"] = g_info.get("types", "")
-                    row["google_business_status"] = g_info.get("business_status", "")
-                    row["google_price_level"] = g_info.get("price_level", "")
-                    row["google_phone"] = g_info.get("phone", "")
-                    row["google_website"] = g_info.get("website", "")
-                    row["google_editorial_summary"] = g_info.get("editorial_summary", "")
-                    row["google_opening_hours"] = g_info.get("opening_hours", "")
-                    row["google_open_now"] = g_info.get("open_now", "")
-                    print(f"    🏛️ 구글 공식명: {official_name} / {g_info.get('formatted_address')} / {g_info.get('category')}")
-                else:
-                    print("    ⚠️ Google Places 매칭 실패 (한글 상호명으로 미슐랭 조회 진행)")
-
-                try:
-                    m_info = check_michelin_status(
-                        official_name=official_name,
-                        korean_name=store.korean_name,
-                        address=g_info["formatted_address"] if g_info else store.address,
-                        country_code=store.country_code,
-                    )
-                except Exception as e:
-                    row["note"] += f"미슐랭 조회 실패: {e}; "
-                    m_info = MichelinInfo(
-                        is_michelin=False, edition_type=EditionType.NONE,
-                        latest_grade=MichelinGrade.NONE, is_active=False,
-                        summary_badge="조회 오류", reason=str(e)
-                    )
-
-                row["is_michelin"] = m_info.is_michelin
-                row["edition_type"] = m_info.edition_type.value
-                row["latest_grade"] = m_info.latest_grade.value
-                row["is_active"] = m_info.is_active
-                row["summary_badge"] = m_info.summary_badge
-                row["history"] = "; ".join(f"{h.edition}:{h.grade.value}" for h in m_info.history)
-                row["source_urls"] = " | ".join(m_info.source_urls)
-
-                print(f"    🏅 {m_info.summary_badge}")
-
-                writer.writerow(row)
+                    print(f"⚠️ 예기치 못한 오류 ({futures[fut]}): {e}")
+                    rows = None
+                if rows is None:
+                    failed += 1
+                    continue
+                writer.writerows(rows)
                 out_f.flush()  # 중간에 중단돼도 여기까지는 파일에 남도록
+                print(f"--- 진행 {done_count}/{len(todo)} 완료, 경과 {int(time.time() - started)}초")
 
-                time.sleep(random.uniform(*STORE_DELAY))
-
-    print(f"\n처리 완료! 결과 -> '{OUTPUT_FILE}'")
+    if failed:
+        print(f"재시도 필요한 영상 {failed}개 (일시적 오류): 같은 명령을 다시 실행하면 이어서 처리합니다.")
+    print(f"처리 완료! 결과 -> '{output_file}'")
 
     # CSV는 한글/엑셀 조합에서 인코딩 문제가 종종 있어서, xlsx로도 같이 저장 (엑셀에서 보기엔 이쪽이 안전함)
     try:
         import pandas as pd
         # cid는 19자리 정수라 숫자로 읽으면 엑셀이 15자리까지만 살리고 나머지를 0으로 바꿈 -> 문자열로 유지
-        df = pd.read_csv(OUTPUT_FILE, encoding="utf-8-sig", dtype={"google_cid": str})
-        xlsx_path = OUTPUT_FILE.replace(".csv", ".xlsx")
+        df = pd.read_csv(output_file, encoding="utf-8-sig", dtype={"google_cid": str})
+        xlsx_path = output_file.replace(".csv", ".xlsx")
         df.to_excel(xlsx_path, index=False)
         print(f"엑셀용 xlsx 파일도 저장했습니다 -> '{xlsx_path}' (한글 깨짐 걱정 없이 이 파일을 여세요)")
     except ImportError:
@@ -633,4 +1043,14 @@ def convert_existing_csv_to_xlsx():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    ap = argparse.ArgumentParser(description="영상 소개란에서 식당 정보를 추출하고 Places/미슐랭을 조회한다.")
+    ap.add_argument("--output", default=OUTPUT_FILE, help="결과 CSV 경로 (기본: data/restaurants_info.csv)")
+    ap.add_argument("--limit", type=int, default=None, help="앞에서부터 N개 영상만 처리 (샘플 검증용)")
+    ap.add_argument("--workers", type=int, default=3, help="병렬 처리할 영상 수 (기본 3, API 속도 제한에 주의)")
+    ap.add_argument("--video-id", action="append", default=[], help="입력 목록 대신 지정한 영상 ID만 처리 (여러 번 지정 가능)")
+    ap.add_argument("--michelin-fallback", action="store_true",
+                    help="Michelin API에서 일치 식당이 없을 때 기존 Tavily 검색으로 한 번 더 확인 (호출·비용 증가)")
+    args = ap.parse_args()
+    MICHELIN_TAVILY_FALLBACK = args.michelin_fallback
+    main(output_file=args.output, limit=args.limit, workers=args.workers, video_ids=args.video_id or None)

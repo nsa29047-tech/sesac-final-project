@@ -5,11 +5,16 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "parse-apis",
     "colorama>=0.4.6",
+    "google-genai>=2.25.0",
+    "langchain-openai>=1.6.6",
+    "langgraph>=1.2.12",
     "langgraph-cli[inmem]>=0.4.32",
     "openai>=3.20.0",
     "openpyxl>=3.1.5",
     "pandas>=3.0.6",
+    "parse-sdk>=0.2.0",
     "playwright>=1.63.0",
     "psycopg2-binary>=2.9.13",
     "pydantic>=2.13.5",
@@ -18,3 +23,18 @@ dependencies = [
     "youtube-transcript-api>=1.2.4",
     "yt-dlp>=2026.8.19",
 ]
+
+[tool.uv.sources]
+parse-apis = { path = "parse_apis", editable = true }
+
+# Managed by the parse CLI (`parse add` / `parse remove` / `parse sync`).
+# Edit `apis` to curate which of your account APIs this repo syncs;
+# an absent `apis` key means all of them.
+[tool.parse]
+
+[[tool.parse.marketplace]]
+scraper_id = "70808de2-3170-4ee9-8819-d781d6b15701"
+slug = "guide_michelin_com_api"
+version = 8
+listing_id = "b8b4cb04-0239-4c8d-a7a7-1b3730cb8c28"
+source_url = "https://guide.michelin.com"
