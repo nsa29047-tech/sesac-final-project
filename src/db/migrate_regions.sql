@@ -5,9 +5,9 @@ CREATE TABLE IF NOT EXISTS regions (
     region_id    SERIAL       PRIMARY KEY,
     country_code CHAR(2)      NOT NULL,
     parent_id    INT          REFERENCES regions ON DELETE CASCADE,
-    level        SMALLINT     NOT NULL CHECK (level BETWEEN 1 AND 2),   -- 1=시, 2=시 다음 단계(구/군 등). 없으면 1단계만
+    level        SMALLINT     NOT NULL CHECK (level BETWEEN 1 AND 3),   -- 1=시, 2=구/군, 3=동·면. 없는 단계는 건너뛰고 있는 데까지만
     name         VARCHAR(100) NOT NULL,
-    CHECK ((level = 1 AND parent_id IS NULL) OR (level = 2 AND parent_id IS NOT NULL))
+    CHECK ((level = 1 AND parent_id IS NULL) OR (level > 1 AND parent_id IS NOT NULL))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_regions ON regions (country_code, COALESCE(parent_id, 0), level, name);
 CREATE INDEX IF NOT EXISTS idx_regions_parent ON regions (parent_id);

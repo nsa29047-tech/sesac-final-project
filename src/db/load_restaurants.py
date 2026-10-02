@@ -11,8 +11,6 @@ from urllib.parse import parse_qs, urlparse
 import openpyxl
 import psycopg2
 
-PRICE = {"PRICE_LEVEL_FREE": 0, "PRICE_LEVEL_INEXPENSIVE": 1, "PRICE_LEVEL_MODERATE": 2,
-         "PRICE_LEVEL_EXPENSIVE": 3, "PRICE_LEVEL_VERY_EXPENSIVE": 4}
 DAYS = {"Sunday": 0, "Monday": 1, "Tuesday": 2, "Wednesday": 3, "Thursday": 4, "Friday": 5, "Saturday": 6}
 
 
@@ -96,6 +94,7 @@ def main(xlsx, dsn):
     cur = conn.cursor()
     skipped_hours = []
     skipped_rows = []
+    unchecked_michelin = []
     loaded = 0
 
     for values in rows[1:]:
@@ -106,7 +105,6 @@ def main(xlsx, dsn):
             continue
         loaded += 1
         vid = video_id(r["video_url"])
-        types = [t.strip() for t in (s(r["google_types"]) or s(r["google_category_code"]) or "").split(",") if t.strip()]
 
         cur.execute("""
             INSERT INTO videos (video_id, url, title) VALUES (%s,%s,%s)
@@ -119,15 +117,14 @@ def main(xlsx, dsn):
         cur.execute("""
             INSERT INTO restaurants (google_cid, google_maps_url, google_place_id, name_official, name_ko,
                 country_code, latitude, longitude,
-                formatted_address, rating, rating_count, price_level, business_status, phone, website,
-                editorial_summary, primary_type, primary_type_label, category_broad, category_detail,
+                formatted_address, rating, rating_count, business_status, phone, website,
                 opening_hours_raw, places_fetched_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
             ON CONFLICT (google_cid) DO UPDATE SET
                 google_place_id = EXCLUDED.google_place_id,
                 latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude,
                 rating = EXCLUDED.rating, rating_count = EXCLUDED.rating_count,
-                price_level = EXCLUDED.price_level, business_status = EXCLUDED.business_status,
+                business_status = EXCLUDED.business_status,
                 phone = EXCLUDED.phone, website = EXCLUDED.website,
                 opening_hours_raw = EXCLUDED.opening_hours_raw,
                 places_fetched_at = now(), updated_at = now()
@@ -135,19 +132,13 @@ def main(xlsx, dsn):
                     (gcid, maps_url, s(r.get("google_place_id")), r["google_official_name"], s(r["korean_name"]),
                      r["country_code"], s(r.get("google_latitude")), s(r.get("google_longitude")),
                      s(r["google_formatted_address"]), r["google_rating"],
-                     r["google_user_rating_count"], PRICE.get(r["google_price_level"]), s(r["google_business_status"]),
-                     s(r["google_phone"]), s(r["google_website"]), s(r["google_editorial_summary"]),
-                     s(r["google_category_code"]), s(r["google_category"]), s(r["category_broad"]),
-                     s(r["category_detail"]), s(r["google_opening_hours"])))
+                     r["google_user_rating_count"], s(r["google_business_status"]),
+                     s(r["google_phone"]), s(r["google_website"]), s(r["google_opening_hours"])))
         rid = cur.fetchone()[0]
 
         cur.execute("""INSERT INTO video_restaurant_mentions (video_id, restaurant_id, extracted_name, extracted_address)
                        VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
                     (vid, rid, s(r["korean_name"]), s(r["address"])))
-
-        for pos, t in enumerate(types):
-            cur.execute("""INSERT INTO restaurant_types (restaurant_id, type_code, position) VALUES (%s,%s,%s)
-                           ON CONFLICT DO NOTHING""", (rid, t, pos))
 
         raw = s(r["google_opening_hours"])
         if raw:
@@ -160,6 +151,12 @@ def main(xlsx, dsn):
                     (restaurant_id, day_of_week, seq, is_closed, open_time, close_time) VALUES (%s,%s,%s,%s,%s,%s)""",
                                 [(rid, *p) for p in parsed])
 
+        # edition_type / is_active 는 CSV에 없다. Parse API는 현재 가이드 등재 여부만 주므로 등재면 REGULAR, 현재 등재 중으로 본다.
+        note = s(r["note"]) or ""
+        if not s(r["latest_grade"]) or "미슐랭 미조회" in note or "미슐랭 조회 실패" in note:
+            unchecked_michelin.append(s(r["korean_name"]))   # fill_michelin.py 로 채운 뒤 다시 적재하면 michelin_status 가 생긴다
+            continue
+        is_michelin = to_bool(r["is_michelin"])
         cur.execute("""
             INSERT INTO michelin_status (restaurant_id, is_michelin, edition_type, latest_grade, is_active, note)
             VALUES (%s,%s,%s,%s,%s,%s)
@@ -167,7 +164,7 @@ def main(xlsx, dsn):
                 edition_type = EXCLUDED.edition_type, latest_grade = EXCLUDED.latest_grade,
                 is_active = EXCLUDED.is_active,
                 note = EXCLUDED.note, checked_at = now()""",
-                    (rid, to_bool(r["is_michelin"]), r["edition_type"], r["latest_grade"], to_bool(r["is_active"]),
+                    (rid, is_michelin, "REGULAR" if is_michelin else "NONE", r["latest_grade"], is_michelin,
                      s(r["note"])))
 
         for item in (s(r["history"]) or "").split(";"):
@@ -181,7 +178,7 @@ def main(xlsx, dsn):
                             (rid, int(year.group()), grade))
 
     conn.commit()
-    print(f"loaded {loaded} rows; skipped (google_cid 없음): {skipped_rows or 'none'}; hours not parsed for: {skipped_hours or 'none'}")
+    print(f"loaded {loaded} rows; skipped (google_cid 없음): {skipped_rows or 'none'}; hours not parsed for: {skipped_hours or 'none'}; 미슐랭 미확인(michelin_status 미적재): {len(unchecked_michelin)}곳")
 
 
 if __name__ == "__main__":

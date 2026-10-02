@@ -1,6 +1,6 @@
 -- 맛집 RAG 챗봇 테이블 설계 v2 (PostgreSQL 16, restaurants_info.xlsx 실제 컬럼 기준)
 -- 엑셀 1행 = "영상 1개 x 식당 1개" 가 비정규화된 형태 -> 아래처럼 분리한다.
---   정형(SQL search): videos / restaurants / restaurant_types / restaurant_tags / restaurant_hours / michelin_* / menus
+--   정형(SQL search): videos / restaurants / regions / restaurant_tags / restaurant_hours / michelin_* / menus
 --   비정형(RAG search): video_restaurant_notes(원문) + restaurant_chunks(임베딩, restaurant_chunks.sql)
 
 BEGIN;
@@ -13,18 +13,18 @@ CREATE TABLE videos (
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- 1-1. 지역 (시 -> 시 다음 단계, 최대 2단계) ---------------------------------------------------
--- Places API addressComponents 에서 뽑은 계층형 지역. 국내는 서울특별시 > 마포구, 성남시 > 분당구처럼 시와 구/군까지,
--- 구/군이 없는 곳(안동시)은 시만 저장한다. 도로명은 쓰지 않는다.
+-- 1-1. 지역 (시 -> 구/군 -> 동·면, 최대 3단계) ---------------------------------------------------
+-- Places API addressComponents 에서 뽑은 계층형 지역. 국내는 서울특별시 > 마포구 > 연남동처럼 시, 구/군, 동까지,
+-- 없는 단계(안동시는 시만, 도로명 주소라 동이 없으면 구까지)는 있는 데까지만 저장한다. 도로명은 쓰지 않는다.
 -- 식당은 가장 하위 지역 하나만 가리키고(restaurants.region_id), 상위 지역 검색은 parent_id 를 따라 올라가거나 내려가서 한다.
 -- "OO역/OO 근처" 질문은 이 테이블이 아니라 restaurants.latitude/longitude 로 반경 검색한다.
 CREATE TABLE regions (
     region_id    SERIAL       PRIMARY KEY,
     country_code CHAR(2)      NOT NULL,
     parent_id    INT          REFERENCES regions ON DELETE CASCADE,
-    level        SMALLINT     NOT NULL CHECK (level BETWEEN 1 AND 2),   -- 1=시, 2=시 다음 단계(구/군 등). 없으면 1단계만
+    level        SMALLINT     NOT NULL CHECK (level BETWEEN 1 AND 3),   -- 1=시, 2=구/군, 3=동·면. 없는 단계는 건너뛰고 있는 데까지만
     name         VARCHAR(100) NOT NULL,                                 -- Places 응답의 long_name (languageCode 로 요청한 언어)
-    CHECK ((level = 1 AND parent_id IS NULL) OR (level = 2 AND parent_id IS NOT NULL))
+    CHECK ((level = 1 AND parent_id IS NULL) OR (level > 1 AND parent_id IS NOT NULL))
 );
 -- parent_id 가 NULL 인 최상위 행도 중복되지 않게 COALESCE 로 유니크 처리
 CREATE UNIQUE INDEX uq_regions ON regions (country_code, COALESCE(parent_id, 0), level, name);
@@ -42,37 +42,23 @@ CREATE TABLE restaurants (
     name_ko             VARCHAR(200),                    -- 한국어 표기(영상 기준 추출명)
     country_code        CHAR(2)       NOT NULL,
     formatted_address   VARCHAR(500),                    -- google_formatted_address
-    region_id           INT REFERENCES regions,          -- 가장 하위 지역(최대 2단계). 상위 지역은 regions.parent_id 로 조회
+    region_id           INT REFERENCES regions,          -- 가장 하위 지역(최대 3단계). 상위 지역은 regions.parent_id 로 조회
     latitude            NUMERIC(9,6),                   -- Places API location ("근처 식당" 검색용)
     longitude           NUMERIC(9,6),
     rating              NUMERIC(2,1),
     rating_count        INT,
-    price_level         SMALLINT CHECK (price_level BETWEEN 0 AND 4),   -- FREE=0 ... VERY_EXPENSIVE=4, 없으면 NULL
     business_status     VARCHAR(30),                     -- OPERATIONAL / CLOSED_TEMPORARILY / CLOSED_PERMANENTLY
     phone               VARCHAR(40),
     website             VARCHAR(300),
-    editorial_summary   TEXT,                            -- Google 한줄 소개(영문). RAG 청크 후보
-    primary_type        VARCHAR(60),                     -- google_category_code
-    primary_type_label  VARCHAR(60),                     -- google_category ("Korean Restaurant")
-    category_broad      VARCHAR(50),                     -- 대분류(한식/일식/중식/양식/동남아식/인도식/중동식/기타). Google 타입 매핑 우선, 없으면 영상 추출값
-    category_detail     VARCHAR(50),                     -- 세부 분류(오마카세/파인다이닝/라멘 ...). 영상 추출값
+    category_broad      VARCHAR(50),                     -- 대분류(한식/일식/중식/양식/동남아식/인도식/중동식/기타). 영상 추출값(load_notes.py)
+    category_detail     VARCHAR(50),                     -- 세부 분류(오마카세/파인다이닝/라멘 ...). 영상 추출값(load_notes.py)
     opening_hours_raw   TEXT,                            -- 원문 보관(파싱 실패/재파싱 대비)
     places_fetched_at   TIMESTAMPTZ,
     created_at          TIMESTAMPTZ   NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_restaurants_country ON restaurants (country_code);
-CREATE INDEX idx_restaurants_primary_type ON restaurants (primary_type);
 CREATE INDEX idx_restaurants_region ON restaurants (region_id);
-
--- google_types (쉼표 구분 문자열) -> 행으로 분리. 검색 필터용
-CREATE TABLE restaurant_types (
-    restaurant_id BIGINT      NOT NULL REFERENCES restaurants ON DELETE CASCADE,
-    type_code     VARCHAR(60) NOT NULL,
-    position      SMALLINT    NOT NULL,                  -- 원본 순서(0 = 대표 타입)
-    PRIMARY KEY (restaurant_id, type_code)
-);
-CREATE INDEX idx_restaurant_types_code ON restaurant_types (type_code);
 
 -- 3. 영업시간 (google_opening_hours 파싱 결과) --------------------------------
 -- 하루 여러 구간 가능(점심/저녁) -> seq. 휴무일은 행을 만들지 않고 is_closed 행 1개로 표현.
@@ -94,7 +80,7 @@ CREATE TABLE restaurant_hours (
 -- 현재 상태(1:1). is_michelin=false 인 식당도 "확인했고 미등재"라는 사실을 남기기 위해 행을 만든다.
 CREATE TABLE michelin_status (
     restaurant_id  BIGINT      PRIMARY KEY REFERENCES restaurants ON DELETE CASCADE,
-    -- is_michelin / latest_grade / is_active 는 michelin_records(history)에서 계산한 값. 판정 기준은 michelin_records.
+    -- 등급은 Parse API(현재 등급)로 판별한다. edition_type / is_active 는 CSV에 없고 적재할 때 is_michelin 에서 채운다. 판정 기준은 michelin_records.
     is_michelin    BOOLEAN     NOT NULL,                 -- 한 번이라도 등재된 적 있음
     edition_type   VARCHAR(20) NOT NULL,                 -- NONE / REGULAR ...
     latest_grade   VARCHAR(20) NOT NULL,                 -- NONE / BIB_GOURMAND / 1_STAR / 2_STARS / 3_STARS / SELECTED / UNKNOWN(등재는 확인, 등급 근거 없음)

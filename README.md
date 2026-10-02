@@ -18,7 +18,7 @@
 
 - Python 3.14, [uv](https://docs.astral.sh/uv/)
 - LangGraph / LangChain, LangSmith (트레이싱)
-- OpenAI API (`gpt-4o-mini`): 소개란에서 식당명·주소 추출, 카테고리 분류, 미슐랭 판별
+- OpenAI API (`gpt-4o-mini`): 소개란에서 식당명·주소 추출, Places 후보 선택
 - Google Places API (New): 공식 상호명, 주소, 평점, 영업시간 등
 - Parse SDK (guide.michelin.com API): 미슐랭 현재 등급 판별 / Tavily Search: 폴백(`--michelin-fallback`)과 연도별 이력 근거 검색
 - Gemini API (Google AI Studio): 영상(시각·음성)을 직접 분석해 메뉴·분위기·태그 추출
@@ -34,7 +34,8 @@ sesac-final-project/
 │   ├── pipeline/                       # 데이터 수집 파이프라인
 │   │   ├── channel_video_filter.py     # 2. 영상 소개란 기준 필터링
 │   │   ├── extract_restaurant_info.py  # 3. 식당 정보 추출 + Places/미슐랭 조회
-│   │   ├── enrich_regions.py           # 4. 지역(시 > 구/군) 보강
+│   │   ├── fill_michelin.py            # 3-b. 미슐랭 미조회 식당을 하루 한도만큼씩 채움
+│   │   ├── enrich_regions.py           # 4. 지역(시 > 구/군 > 동) 보강
 │   │   ├── extract_video_notes.py      # 5. Gemini 영상 분석 (메뉴·분위기·태그)
 │   │   ├── get_transcripts.py          # (미사용) 자막 수집 - Playwright
 │   │   ├── save_scripts.py             # (미사용) 자막 수집 - youtube-transcript-api
@@ -64,10 +65,11 @@ sesac-final-project/
 2. **필터링** (`channel_video_filter.py`): 소개란에 '가게' 또는 '장소'가 언급된 영상만 남기고 `filtered_channel_video_urls.txt` / `excluded_channel_video_urls.txt`로 나눕니다. 중국 소재 식당 제외는 이후 Places API 주소로 판별할 예정이라 이 단계에서는 하지 않습니다.
 3. **식당 정보 추출** (`extract_restaurant_info.py`):
    - yt-dlp로 소개란을 가져와 OpenAI로 식당 한국어 상호명·주소·국가코드를 추출
-   - Google Places API로 공식 상호명, 평점, 영업시간, 타입 등을 조회하고 카테고리(대분류/세부)를 분류
+   - Google Places API로 공식 상호명, 주소, 좌표, 평점, 영업 상태, 연락처, 영업시간을 조회. 음식 분류(대분류/세부/태그)와 가격 정보는 CSV에 저장하지 않고 Gemini 영상 분석 결과를 씁니다. 숙소(호텔 등)로 매칭된 식당은 `note`에 표시합니다
    - Parse(guide.michelin.com) API로 미슐랭 현재 등급을 판별: 검색 결과 중 이름과 도시(또는 거리 주소)가 일치하는 식당만 채택하고, 일치하는 식당이 없으면 `NONE`. API는 현재 등급만 주므로 연도별 이력(`history`)은 비워 두고, 근거가 확인된 경우에만 따로 채웁니다. 무료 플랜의 분당 5회 제한 때문에 호출 사이에 약 12.5초 간격을 둡니다. `--michelin-fallback`을 주면 일치 식당이 없을 때 기존 Tavily 검색으로 한 번 더 확인합니다(호출 증가).
+   - Parse API는 **하루 100회 제한**이 있어서(식당 약 240곳이면 3일), 전체 실행은 `--skip-michelin`으로 미슐랭을 건너뛰고(`note`에 '미슐랭 미조회' 표시) 나중에 `fill_michelin.py`로 하루 한도(기본 90회)만큼씩 채웁니다. 같은 식당이 여러 영상에 나오면 한 번만 조회하고, 한도에 도달하면 멈췄다가 다음 날 이어서 처리합니다. `google_cid`가 없는 행은 건너뜁니다. 미슐랭을 못 채운 행은 `load_restaurants.py`가 `michelin_status`를 만들지 않습니다.
    - 건마다 CSV에 즉시 기록해 중간에 중단되어도 결과가 보존되며, 완료 후 xlsx로 변환
-4. **지역 보강** (`enrich_regions.py`): 3번 CSV의 `google_place_id`로 Places Details의 `addressComponents`에서 시와 그 다음 단계(서울특별시 > 마포구, 성남시 > 분당구)를 뽑아 `data/restaurant_regions.csv`에 건별로 저장합니다. 구/군이 없는 곳(안동시)은 시만, 도로명은 쓰지 않습니다. 식당당 Details 1회이고, 재실행하면 이어서 처리합니다. `--limit`으로 샘플을 먼저 검증하세요. "OO역/OO 근처" 질문은 지역 컬럼이 아니라 식당의 위경도로 반경 검색합니다(질문 시점에 지명의 좌표를 조회). DB 적재 스크립트는 아직 없습니다.
+4. **지역 보강** (`enrich_regions.py`): 3번 CSV의 `google_place_id`로 Places Details의 `addressComponents`에서 시 > 구/군 > 동·면(서울특별시 > 마포구 > 연남동, 성남시 > 분당구 > 정자동)을 뽑아 `data/restaurant_regions.csv`에 건별로 저장합니다. 없는 단계는 건너뛰고 있는 데까지만 저장하며(안동시는 시만, 도로명 주소라 동이 없으면 구까지), 도로명은 쓰지 않습니다. 식당당 Details 1회이고, 재실행하면 이어서 처리합니다. `--limit`으로 샘플을 먼저 검증하세요. "OO역/OO 근처" 질문은 지역 컬럼이 아니라 식당의 위경도로 반경 검색합니다(질문 시점에 지명의 좌표를 조회). DB 적재 스크립트는 아직 없습니다.
 5. **영상 분석** (`extract_video_notes.py`): 3번의 CSV를 가게 목록으로 삼아, Gemini API에 영상 URL을 직접 넘겨 메뉴·분위기·대분류/세부 분류·태그를 추출합니다. 한 영상에 가게가 여러 곳이면 가게마다 따로 호출하며, 결과는 `data/video_notes/{model}/{video_id}__{google_cid}.json`에 저장됩니다. Google 매칭에 실패한 가게는 건너뜁니다. 자막은 더 이상 수집하지 않습니다.
 6. **DB 적재**: `load_restaurants.py`(식당·영업시간·미슐랭) → `load_notes.py`(카테고리·태그·메뉴·노트) → `embed_chunks.py`(청크 임베딩). 모두 여러 번 실행해도 중복되지 않습니다.
 
@@ -79,8 +81,7 @@ sesac-final-project/
 |---|---|
 | `videos` | 영상 (video_id, url, title) |
 | `restaurants` | 식당 마스터. `google_cid`(Google Maps URL의 cid)로 중복 제거 |
-| `regions` | 지역 계층 (시 > 구/군, `parent_id`, 최대 2단계). `restaurants.region_id`는 가장 하위 지역을 가리킴. 이미 적용한 DB는 `migrate_regions.sql` 실행 |
-| `restaurant_types` | Google 타입 목록 (검색 필터용) |
+| `regions` | 지역 계층 (시 > 구/군 > 동·면, `parent_id`, 최대 3단계). `restaurants.region_id`는 가장 하위 지역을 가리킴. 이미 적용한 DB는 `migrate_regions.sql` 실행 |
 | `restaurant_hours` | 요일별 영업시간 (하루 여러 구간, 휴무, 자정 넘김 지원) |
 | `michelin_status` | 미슐랭 현재 상태 (등재 여부, 최신 등급, 현재 등재 중 여부) |
 | `michelin_records` | 미슐랭 연도별 이력 |
@@ -93,6 +94,7 @@ sesac-final-project/
 설계 시 참고한 점:
 - `google_cid`는 부호 없는 64bit 정수라 BIGINT 범위를 넘을 수 있어 문자열로 저장합니다.
 - `google_open_now`는 조회 시점 값이므로 저장하지 않고, 영업 여부는 `restaurant_hours`와 현지 시간으로 계산합니다.
+- 결과 CSV는 23개 컬럼입니다. 음식 분류·가격대(Google `priceLevel`)·소개글은 쓰지 않고, `edition_type`·`is_active`는 CSV에 없으며 DB 적재(`load_restaurants.py`) 때 `is_michelin`에서 채웁니다(등재면 REGULAR, 현재 등재 중).
 - RAG용 `restaurant_chunks`는 pgvector 확장이 필요해 `restaurant_chunks.sql`로 분리했습니다. 이미 이전 스키마를 적용한 DB는 `migrate_notes.sql`을 실행하세요.
 
 ## 시작하기
@@ -119,7 +121,8 @@ uv sync   # 의존성은 pyproject.toml에 모두 정의되어 있음
 
 ```bash
 uv run python src/pipeline/channel_video_filter.py
-uv run python src/pipeline/extract_restaurant_info.py
+uv run python src/pipeline/extract_restaurant_info.py --skip-michelin   # Parse 하루 100회 제한 때문에 미슐랭은 건너뜀
+uv run python src/pipeline/fill_michelin.py                               # 하루 한도(기본 90회)만큼씩 미슐랭 채움, 남으면 다음 날 다시 실행
 uv run python src/pipeline/enrich_regions.py --limit 10 --output data/restaurant_regions_sample.csv   # 샘플 검증 후 전체
 ```
 
@@ -147,7 +150,7 @@ uv run langgraph dev
 - [x] 영상 자막 수집 (Gemini 영상 분석으로 대체되어 더 이상 쓰지 않음)
 - [x] 식당 정보 추출 (Google Places, 미슐랭)
 - [x] DB 스키마 설계 및 적재 스크립트
-- [ ] 지역(시 > 구/군): 스키마와 보강 스크립트 작성 완료, 샘플 24곳 검증 완료. DB 적재 스크립트와 전체 실행은 아직
+- [ ] 지역(시 > 구/군 > 동): 스키마와 보강 스크립트 작성, 200개 영상의 223곳 실행 완료(`data/restaurant_regions.csv`). DB 적재 스크립트(`load_regions.py`)는 아직
 - [ ] 메뉴·특징 등 비정형 정보 추출 및 벡터 스토어 적재
 - [ ] LangGraph 챗봇 구현 (현재 `app.py`는 빈 그래프)
 - [ ] n8n 자동화
@@ -155,7 +158,7 @@ uv run langgraph dev
 ## 알려진 이슈 / TODO
 
 - 자막 수집 스크립트(`get_transcripts.py`, `save_scripts.py`)와 `extract_transcript_notes.py`는 Gemini 영상 분석으로 대체되어 쓰지 않습니다. 삭제하려면 `extract_video_notes.py`가 import하는 `TranscriptNotes`를 먼저 옮겨야 합니다. Gemini 추출은 4개 영상으로만 검증했으므로 전체 실행 전에 기존 자막 방식 결과와 샘플을 비교합니다.
-- 지역 매핑: `locality`가 구 단위인 나라(예: 일본 도쿄)는 "시" 자리에 구가 들어갑니다. `restaurant_regions.csv`의 `address_components` 원본으로 `--rebuild-from`을 써서 API 호출 없이 재계산합니다. 근처 역 정보는 저장하지 않으며, 좌표 반경 검색으로 대신합니다.
+- 지역 매핑: `locality`가 구 단위인 나라(예: 일본 도쿄)는 "시" 자리에 구가 들어갑니다. 규칙을 바꾸면 Details를 다시 호출해 재생성합니다(식당당 1회, 223곳이면 약 3분). 원본 `addressComponents`는 용량 때문에 저장하지 않습니다. 해외 지역명은 Google이 한국어 이름을 주지 않아 영문·현지 표기(Paris, Sapporo, Bei Jing Shi 등)로 저장되고, 한국어 번역 컬럼은 만들지 않습니다(LLM 번역에 오류가 많았음). 해외 지명 질문("파리", "삿포로")은 챗봇이 질문 시점에 Places로 좌표를 조회해 반경 검색으로 처리합니다. 근처 역 정보는 저장하지 않으며, 좌표 반경 검색으로 대신합니다.
 - 미슐랭: `summary_badge`는 제거했고, `is_michelin`/`latest_grade`/`is_active`는 LLM이 준 `history`(연도 근거 필수)와 `current_grade`(근거 문장 인용 필수)에서 코드로 계산합니다. 등급은 근거 문장·공식 등급별 목록 페이지로 검증하고, 등재는 확인했지만 등급 근거가 없으면 `latest_grade=UNKNOWN`으로 저장합니다(사람이 확인 필요). `ACTIVE_FROM_YEAR`는 새 가이드 발표 시 갱신합니다. 같은 식당도 검색·LLM 결과가 실행마다 달라 등재를 놓치는 경우(false negative)가 있습니다. 이전 방식으로 만든 기존 결과는 재추출이 필요합니다. `source_urls`(판별 근거 링크)는 사람이 검증할 때만 쓰므로 CSV/xlsx에만 남기고 DB에는 적재하지 않습니다. 일부는 다른 지역 식당 페이지를 가리킬 수 있습니다. 판정은 `michelin_records`를 기준으로 합니다.
 - 기존 DB가 있다면 `ALTER TABLE michelin_status DROP COLUMN summary_badge; DROP TABLE michelin_sources;`를 실행해야 합니다.
 - Places 매칭은 후보 5개를 받아 LLM이 소개란의 이름·주소와 대조해 고르고, 외국 식당은 현지어 이름 추정으로 2차 검색합니다(식당당 Places 호출 최대 2회). 같은 주소의 다른 이름 등 일부는 여전히 틀릴 수 있어 미슐랭 후보는 매칭부터 사람이 확인합니다.

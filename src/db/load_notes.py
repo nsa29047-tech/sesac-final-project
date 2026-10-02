@@ -4,8 +4,7 @@
 restaurants / videos 가 채워져 있어야 한다. 결과 JSON의 google_cid 로 식당을 찾는다.
 
 적재 내용:
-  - restaurants.category_broad / category_detail
-      대분류는 Google primary_type 매핑을 우선하고, 매핑이 없으면 영상 추출값을 쓴다.
+  - restaurants.category_broad / category_detail : 영상 추출값(Gemini)
   - restaurant_tags   : cuisine_tags (기존 태그에 추가)
   - menus             : 메뉴/음료. (restaurant_id, video_id) 단위로 지우고 다시 넣는다.
   - video_restaurant_notes : 컨셉/분위기/총평/임베딩용 요약 + 원본 JSON
@@ -16,7 +15,6 @@ restaurants / videos 가 채워져 있어야 한다. 결과 JSON의 google_cid �
 import argparse
 import json
 import os
-import sys
 from pathlib import Path
 
 import psycopg2
@@ -24,15 +22,7 @@ from dotenv import load_dotenv
 from psycopg2.extras import Json
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "pipeline"))
-from extract_restaurant_info import BROAD_CATEGORY_MAP  # noqa: E402  Google 타입 -> 대분류 매핑 재사용
-
 NOTES_DIR = ROOT / "data" / "video_notes"
-
-
-def resolve_broad(primary_type, video_broad):
-    """대분류: Google 타입 매핑 우선, 없으면 영상 추출값."""
-    return BROAD_CATEGORY_MAP.get(primary_type or "") or video_broad
 
 
 def timestamp_to_sec(text):
@@ -65,11 +55,11 @@ def menu_rows(note):
 
 def load_note(cur, note):
     """JSON 1개를 적재하고 요약 문자열을 반환. 식당이 DB에 없으면 None."""
-    cur.execute("SELECT restaurant_id, primary_type FROM restaurants WHERE google_cid = %s", (note["google_cid"],))
+    cur.execute("SELECT restaurant_id FROM restaurants WHERE google_cid = %s", (note["google_cid"],))
     found = cur.fetchone()
     if found is None:
         return None
-    rid, primary_type = found
+    rid = found[0]
     vid = note["video_id"]
 
     cur.execute("SELECT 1 FROM videos WHERE video_id = %s", (vid,))
@@ -77,7 +67,7 @@ def load_note(cur, note):
         return None
 
     cur.execute("UPDATE restaurants SET category_broad = %s, category_detail = %s, updated_at = now() WHERE restaurant_id = %s",
-                (resolve_broad(primary_type, note.get("category_broad")), note.get("category_detail"), rid))
+                (note.get("category_broad"), note.get("category_detail"), rid))
 
     for tag in note.get("cuisine_tags", []):
         cur.execute("INSERT INTO restaurant_tags (restaurant_id, tag) VALUES (%s,%s) ON CONFLICT DO NOTHING", (rid, tag))

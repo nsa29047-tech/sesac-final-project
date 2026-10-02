@@ -259,102 +259,14 @@ class StoreExtractionResult(BaseModel):
     stores: List[StoreInfo] = Field(default_factory=list, description="추출된 가게 목록")
 
 
-class SubCategoryResult(BaseModel):
-    sub_category: str = Field(description="음식 세부 카테고리 한 단어 또는 짧은 구 (예: 족발, 초밥, 치킨, 파인다이닝, 한정식, 삼겹살 등)")
-
-
 # -------------------------------------------------------------
-# 1.5 Google 카테고리 정리 & 1차 대분류 매핑
+# 1.5 숙소 판별 (Places 타입)
 # -------------------------------------------------------------
-# 거의 모든 장소에 공통으로 붙는 boilerplate 타입 - 정보 가치가 없어서 제거
-GOOGLE_BOILERPLATE_TYPES = {"restaurant", "food", "point_of_interest", "establishment", "meal_takeaway", "meal_delivery"}
-
-# 더 구체적인 타입(예: french_restaurant)이 있으면 같이 붙어오는 대륙/권역 단위 상위 타입 - 중복이라 제거
-GOOGLE_UMBRELLA_TYPES = {"european_restaurant", "asian_restaurant", "middle_eastern_restaurant",
-                          "african_restaurant", "latin_american_restaurant"}
-
-# Google primaryType(또는 types) -> 1차 대분류. 필요에 따라 계속 추가/수정하면 됨.
-BROAD_CATEGORY_MAP = {
-    # 한식
-    "korean_restaurant": "한식", "korean_barbecue_restaurant": "한식",
-    # 일식
-    "japanese_restaurant": "일식", "sushi_restaurant": "일식", "ramen_restaurant": "일식",
-    "japanese_curry_restaurant": "일식", "tonkatsu_restaurant": "일식",
-    # 중식
-    "chinese_restaurant": "중식", "cantonese_restaurant": "중식", "dim_sum_restaurant": "중식",
-    "taiwanese_restaurant": "중식",
-    # 동남아/인도
-    "thai_restaurant": "동남아식", "vietnamese_restaurant": "동남아식", "indonesian_restaurant": "동남아식",
-    "malaysian_restaurant": "동남아식", "filipino_restaurant": "동남아식",
-    "indian_restaurant": "인도식", "north_indian_restaurant": "인도식", "south_indian_restaurant": "인도식",
-    "pakistani_restaurant": "인도식", "sri_lankan_restaurant": "인도식", "bangladeshi_restaurant": "인도식",
-    # 양식 (유럽 + 아메리카)
-    "french_restaurant": "양식", "italian_restaurant": "양식", "spanish_restaurant": "양식",
-    "german_restaurant": "양식", "greek_restaurant": "양식", "mediterranean_restaurant": "양식",
-    "european_restaurant": "양식", "american_restaurant": "양식", "steak_house": "양식",
-    "hamburger_restaurant": "양식", "pizza_restaurant": "양식", "seafood_restaurant": "양식",
-    "mexican_restaurant": "양식", "brazilian_restaurant": "양식",
-    # 중동
-    "turkish_restaurant": "중동식", "lebanese_restaurant": "중동식", "middle_eastern_restaurant": "중동식",
-}
-
-
-def clean_google_types(raw_types: List[str]) -> List[str]:
-    """boilerplate 타입 제거 + 더 구체적인 타입이 있으면 대륙 단위 umbrella 타입도 제거."""
-    cleaned = [t for t in raw_types if t not in GOOGLE_BOILERPLATE_TYPES]
-    specific = [t for t in cleaned if t not in GOOGLE_UMBRELLA_TYPES]
-    return specific if specific else cleaned  # 구체적인 게 하나도 없으면 umbrella 타입이라도 남김
-
-
-def map_broad_category(primary_type: str, cleaned_types: List[str]) -> str:
-    """1차 대분류 (한식/일식/중식/양식/동남아식/인도식/중동식/기타)."""
-    if primary_type in BROAD_CATEGORY_MAP:
-        return BROAD_CATEGORY_MAP[primary_type]
-    for t in cleaned_types:
-        if t in BROAD_CATEGORY_MAP:
-            return BROAD_CATEGORY_MAP[t]
-    return "기타"
-
-
-def classify_sub_category(
-    korean_name: str,
-    broad_category: str,
-    google_category: str,
-    cleaned_types: List[str],
-    editorial_summary: str,
-    extra_info: Optional[str],
-) -> str:
-    """
-    2차 세부 카테고리 (족발/초밥/치킨/파인다이닝/한정식/삼겹살 등).
-    Google 타입만으로는 커버가 안 되는 한식 메뉴 기반 세분류가 많아서, 상호명/영상에서 뽑은
-    메뉴 정보/구글 소개글을 종합해서 LLM이 판단하게 함. 근거가 없으면 대분류를 그대로 반환.
-    """
-    prompt = f"""
-아래 정보를 참고해서 이 음식점의 세부 음식 카테고리를 한 단어 또는 짧은 구로 분류하세요.
-
-[상호명]: {korean_name}
-[1차 대분류]: {broad_category}
-[구글 분류]: {google_category or '없음'} (구글 원본 타입: {', '.join(cleaned_types) if cleaned_types else '없음'})
-[구글 소개글]: {editorial_summary or '없음'}
-[영상에서 추출된 메뉴/특징 정보]: {extra_info or '없음'}
-
-세부 카테고리 예시: 족발, 초밥, 오마카세, 라멘, 치킨, 파인다이닝, 한정식, 삼겹살, 곱창, 국밥, 파스타, 스테이크, 버거, 카페
-- 예시에 없어도 적절한 세부 카테고리를 새로 만들어도 됩니다.
-- 판단할 근거가 전혀 없으면 1차 대분류와 동일한 값을 그대로 쓰세요.
-"""
-    try:
-        response = client.beta.chat.completions.parse(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "너는 음식점을 세부 카테고리로 분류하는 전문가야."},
-                {"role": "user", "content": prompt}
-            ],
-            response_format=SubCategoryResult,
-        )
-        parsed = response.choices[0].message.parsed
-        return parsed.sub_category if parsed else broad_category
-    except Exception:
-        return broad_category
+# 식당이 호텔 같은 숙소로 잘못 매칭됐는지 사람이 확인하도록 note 에 표시하는 데만 쓴다.
+# 음식 분류(대분류/세부/태그)는 CSV에 저장하지 않고 Gemini 영상 분석 결과를 쓴다.
+def is_lodging_place(place: Dict[str, Any]) -> bool:
+    primary = place.get("primaryType") or ""
+    return "lodging" in (place.get("types") or []) or primary == "lodging" or primary.endswith("hotel")
 
 
 # -------------------------------------------------------------
@@ -495,11 +407,10 @@ def places_text_search(query: str, country_code: str) -> List[Dict[str, Any]]:
         "X-Goog-FieldMask": (
             "places.id,places.displayName,places.formattedAddress,"
             "places.rating,places.userRatingCount,places.location,"
-            "places.googleMapsUri,places.primaryType,places.primaryTypeDisplayName,places.types,"
-            "places.businessStatus,places.priceLevel,"
+            "places.googleMapsUri,places.primaryType,places.primaryTypeDisplayName,places.types,"  # 유형: 후보 선택(choose_place)과 숙소 판별용
+            "places.businessStatus,"
             "places.nationalPhoneNumber,places.internationalPhoneNumber,places.websiteUri,"
-            "places.editorialSummary,"
-            "places.regularOpeningHours,places.currentOpeningHours"
+            "places.regularOpeningHours"
             # 아래는 Enterprise+Atmosphere 등급이라 비용이 더 나가는 필드들. 필요하면 주석 해제.
             # ",places.servesVegetarianFood,places.takeout,places.delivery,places.dineIn,"
             # "places.reservable,places.outdoorSeating,places.goodForChildren,places.allowsDogs,"
@@ -550,9 +461,6 @@ def search_restaurant_google(korean_name: str, address: Optional[str] = None, co
         return None
 
     regular_hours = place.get("regularOpeningHours", {}) or {}
-    current_hours = place.get("currentOpeningHours", {}) or {}
-    primary_type = place.get("primaryType", "")
-    cleaned_types = clean_google_types(place.get("types", []))
 
     return {
         "place_id": place.get("id"),
@@ -560,23 +468,16 @@ def search_restaurant_google(korean_name: str, address: Optional[str] = None, co
         "formatted_address": place.get("formattedAddress"),
         "rating": place.get("rating"),
         "user_rating_count": place.get("userRatingCount"),
-        "category": place.get("primaryTypeDisplayName", {}).get("text"),
-        "category_code": primary_type,
-        "types": ", ".join(cleaned_types),
-        "types_list": cleaned_types,
-        "broad_category": map_broad_category(primary_type, cleaned_types),
         "lat": place.get("location", {}).get("latitude"),
         "lng": place.get("location", {}).get("longitude"),
         "cid": extract_cid(place.get("googleMapsUri")),
         "maps_url": place.get("googleMapsUri", ""),
         "business_status": place.get("businessStatus", ""),
-        "price_level": place.get("priceLevel", ""),
         "phone": place.get("internationalPhoneNumber") or place.get("nationalPhoneNumber", ""),
         "website": place.get("websiteUri", ""),
-        "editorial_summary": place.get("editorialSummary", {}).get("text", ""),
         # weekdayDescriptions: ["Monday: 11:00 AM – 9:00 PM", ...] 형태의 사람이 읽기 좋은 문자열 리스트
         "opening_hours": " | ".join(regular_hours.get("weekdayDescriptions", [])),
-        "open_now": current_hours.get("openNow", regular_hours.get("openNow", "")),
+        "is_lodging": is_lodging_place(place),
     }
 
 
@@ -732,9 +633,13 @@ _DISTINCTION_TO_GRADE = {
     "bib-gourmand": MichelinGrade.BIB_GOURMAND,
     "the-plate-michelin": MichelinGrade.SELECTED,
 }
+SKIP_MICHELIN = False             # True 면 미슐랭을 조회하지 않고 note 에 표시만 한다. 나중에 fill_michelin.py 로 채운다(--skip-michelin)
+MICHELIN_PENDING_NOTE = "미슐랭 미조회; "
+MICHELIN_MAX_CALLS = None         # 이번 실행에서 Michelin API를 호출할 최대 횟수(크레딧 보호). None 이면 제한 없음 (--michelin-max-calls)
 _michelin_client = None
 _michelin_lock = threading.Lock()
 _michelin_last_call = 0.0
+_michelin_calls = 0
 
 
 def _name_key(text: Optional[str]) -> str:
@@ -799,10 +704,13 @@ def pick_michelin_candidate(candidates: list, official_name: str, korean_name: s
 
 def _michelin_search(query: str):
     """Parse API 검색(분당 호출 수 제한을 지킨다). 오류는 그대로 올려서 호출부가 기록하게 한다."""
-    global _michelin_client, _michelin_last_call
+    global _michelin_client, _michelin_last_call, _michelin_calls
     if not os.getenv("MICHELIN_GUIDE_API_KEY"):
         raise RuntimeError("MICHELIN_GUIDE_API_KEY 없음")
     with _michelin_lock:
+        if MICHELIN_MAX_CALLS is not None and _michelin_calls >= MICHELIN_MAX_CALLS:
+            raise RuntimeError(f"Michelin API 호출 한도({MICHELIN_MAX_CALLS}회) 도달: 크레딧 보호를 위해 조회하지 않음")
+        _michelin_calls += 1
         if _michelin_client is None:
             os.environ.setdefault("PARSE_API_KEY", os.environ["MICHELIN_GUIDE_API_KEY"])
             from parse_apis.guide_michelin_com_api import MichelinGuide
@@ -857,15 +765,18 @@ FIELDNAMES = [
     "google_official_name", "google_formatted_address",
     "google_rating", "google_user_rating_count", "google_cid", "google_maps_url", "google_place_id",
     "google_latitude", "google_longitude",
-    "google_category", "google_category_code", "google_types",
-    "category_broad", "category_detail",
-    "google_business_status", "google_price_level",
-    "google_phone", "google_website", "google_editorial_summary",
-    "google_opening_hours", "google_open_now",
-    "is_michelin", "edition_type", "latest_grade",
-    "is_active", "history",
+    "google_business_status", "google_phone", "google_website", "google_opening_hours",
+    "is_michelin", "latest_grade", "history",
     "source_urls", "note",
 ]
+
+
+def apply_michelin(row: Dict[str, Any], m_info: "MichelinInfo") -> None:
+    """미슐랭 판별 결과를 CSV 행에 채운다. process_video 와 fill_michelin.py 가 같이 쓴다."""
+    row["is_michelin"] = m_info.is_michelin
+    row["latest_grade"] = m_info.latest_grade.value
+    row["history"] = "; ".join(f"{h.edition}:{h.grade.value}" for h in m_info.history)
+    row["source_urls"] = " | ".join(m_info.source_urls)
 
 
 def process_video(url: str, v_idx: int, total: int) -> Optional[List[Dict[str, Any]]]:
@@ -922,39 +833,33 @@ def process_video(url: str, v_idx: int, total: int) -> Optional[List[Dict[str, A
             row["google_place_id"] = g_info.get("place_id") or ""
             row["google_latitude"] = g_info["lat"] if g_info.get("lat") is not None else ""
             row["google_longitude"] = g_info["lng"] if g_info.get("lng") is not None else ""
-            row["google_category"] = g_info.get("category", "")
-            row["google_category_code"] = g_info.get("category_code", "")
-            row["google_types"] = g_info.get("types", "")
             row["google_business_status"] = g_info.get("business_status", "")
-            row["google_price_level"] = g_info.get("price_level", "")
             row["google_phone"] = g_info.get("phone", "")
             row["google_website"] = g_info.get("website", "")
-            row["google_editorial_summary"] = g_info.get("editorial_summary", "")
             row["google_opening_hours"] = g_info.get("opening_hours", "")
-            row["google_open_now"] = g_info.get("open_now", "")
-            print(f"{tag}   구글 공식명: {official_name} / {g_info.get('formatted_address')} / {g_info.get('category')}")
+            if g_info.get("is_lodging"):
+                row["note"] += "숙소로 매칭됨 확인 필요: 식당이 아닌 호텔 등으로 매칭됐을 수 있음; "
+            print(f"{tag}   구글 공식명: {official_name} / {g_info.get('formatted_address')}")
         else:
             row["note"] += "Google 매칭 실패(또는 후보 불일치): 사람이 확인 필요; "
             print(f"{tag}   ⚠️ Google Places 매칭 실패 ({store.korean_name})")
 
-        try:
-            m_info = check_michelin_status(
-                official_name=official_name,
-                korean_name=store.korean_name,
-                address=g_info["formatted_address"] if g_info else store.address,
-                country_code=store.country_code,
-            )
-        except Exception as e:
-            row["note"] += f"미슐랭 조회 실패: {e}; "
-            m_info = michelin_fallback(str(e))
-
-        row["is_michelin"] = m_info.is_michelin
-        row["edition_type"] = m_info.edition_type.value
-        row["latest_grade"] = m_info.latest_grade.value
-        row["is_active"] = m_info.is_active
-        row["history"] = "; ".join(f"{h.edition}:{h.grade.value}" for h in m_info.history)
-        row["source_urls"] = " | ".join(m_info.source_urls)
-        print(f"{tag}   미슐랭: {m_info.latest_grade.value} (등재={m_info.is_michelin}, 현재유효={m_info.is_active})")
+        if SKIP_MICHELIN:
+            row["note"] += MICHELIN_PENDING_NOTE
+            print(f"{tag}   미슐랭: 미조회 (fill_michelin.py 로 나중에 채움)")
+        else:
+            try:
+                m_info = check_michelin_status(
+                    official_name=official_name,
+                    korean_name=store.korean_name,
+                    address=g_info["formatted_address"] if g_info else store.address,
+                    country_code=store.country_code,
+                )
+            except Exception as e:
+                row["note"] += f"미슐랭 조회 실패: {e}; "
+                m_info = michelin_fallback(str(e))
+            apply_michelin(row, m_info)
+            print(f"{tag}   미슐랭: {m_info.latest_grade.value} (등재={m_info.is_michelin}, 현재유효={m_info.is_active})")
 
         rows.append(row)
         time.sleep(random.uniform(*STORE_DELAY))
@@ -990,6 +895,14 @@ def main(output_file: str = OUTPUT_FILE, limit: Optional[int] = None, workers: i
 
     todo = [(i, u) for i, u in enumerate(urls, start=1) if u not in done_urls]
     print(f"대상 {len(urls)}개 중 이미 처리된 {len(urls) - len(todo)}개는 건너뛰고, {len(todo)}개를 워커 {workers}개로 처리합니다.")
+
+    # 워커 스레드가 동시에 openai/httpx 를 처음 불러오면 순환 import 오류('partially initialized module httpx')가 나므로
+    # 메인 스레드에서 OpenAI 호출을 한 번 해 모듈을 미리 로드한다. 실패해도 무시한다.
+    try:
+        client.beta.chat.completions.parse(model="gpt-4o-mini", messages=[{"role": "user", "content": "ok"}],
+                                           response_format=LocalName, max_completion_tokens=16)
+    except Exception:
+        pass
 
     failed = 0
     started = time.time()
@@ -1051,6 +964,12 @@ if __name__ == "__main__":
     ap.add_argument("--video-id", action="append", default=[], help="입력 목록 대신 지정한 영상 ID만 처리 (여러 번 지정 가능)")
     ap.add_argument("--michelin-fallback", action="store_true",
                     help="Michelin API에서 일치 식당이 없을 때 기존 Tavily 검색으로 한 번 더 확인 (호출·비용 증가)")
+    ap.add_argument("--skip-michelin", action="store_true",
+                    help="미슐랭을 조회하지 않는다(Parse API 하루 100회 제한 때문). 나중에 fill_michelin.py 로 하루 한도만큼씩 채운다")
+    ap.add_argument("--michelin-max-calls", type=int, default=None,
+                    help="이번 실행에서 Michelin API를 호출할 최대 횟수. 넘으면 그 식당의 미슐랭 조회는 실패로 기록(note)하고 건너뜀")
     args = ap.parse_args()
     MICHELIN_TAVILY_FALLBACK = args.michelin_fallback
+    MICHELIN_MAX_CALLS = args.michelin_max_calls
+    SKIP_MICHELIN = args.skip_michelin
     main(output_file=args.output, limit=args.limit, workers=args.workers, video_ids=args.video_id or None)

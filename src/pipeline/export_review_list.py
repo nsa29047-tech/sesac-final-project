@@ -3,7 +3,7 @@
 확인 대상:
   1. 미슐랭 등재 후보 (is_michelin=True): 매칭이 맞는지, 등급이 맞는지 확인
   2. Google 매칭 실패/불일치 (note 에 '사람이 확인 필요')
-  3. 숙소(Hotel/Lodging)로 매칭된 식당: 식당이 호텔로 잘못 매칭됐을 수 있음
+  3. 숙소(호텔 등)로 매칭된 식당: note 에 '숙소로 매칭됨'이 있는 행. 식당이 호텔로 잘못 매칭됐을 수 있음
 
 사용: uv run python src/pipeline/export_review_list.py [입력 CSV] [출력 xlsx]
 """
@@ -17,7 +17,7 @@ DEFAULT_INPUT = ROOT / "data" / "restaurants_info.csv"
 
 REVIEW_COLUMNS = [
     "review_reason", "korean_name", "address", "google_official_name", "google_formatted_address",
-    "google_category", "google_maps_url", "latest_grade", "is_active", "source_urls",
+    "google_maps_url", "latest_grade", "source_urls",
     "video_title", "video_url", "note",
 ]
 
@@ -28,7 +28,7 @@ def main(csv_path: Path, out_path: Path):
 
     is_michelin = df["is_michelin"].astype(str).str.lower() == "true"
     match_failed = df["note"].fillna("").str.contains("사람이 확인 필요")
-    is_lodging = df["google_category"].fillna("").str.contains("Hotel|Lodging|Inn|Resort|Guest", case=False)
+    is_lodging = df["note"].fillna("").str.contains("숙소로 매칭됨")
 
     reasons = pd.Series("", index=df.index)
     reasons[is_michelin & (df["latest_grade"] == "UNKNOWN")] += "미슐랭 등재·등급 미확인; "
