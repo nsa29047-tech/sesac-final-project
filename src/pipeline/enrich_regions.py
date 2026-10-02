@@ -71,6 +71,10 @@ def extract_region_path(components: List[Dict[str, Any]]) -> List[str]:
             or _component_name(components, "administrative_area_level_1"))
     second = next((n for n in (_component_name(components, t) for t in SECOND_LEVEL_TYPES) if n), None)
     third = _component_name(components, THIRD_LEVEL_TYPE)
+    # 제주처럼 Google 이 광역 이름의 일부('특별자치도')를 sublocality_level_1 에 넣는 경우가 있어, 광역 이름에 포함된 조각은 쓰지 않는다.
+    admin1 = _component_name(components, "administrative_area_level_1") or ""
+    if second and second != city and second in admin1:
+        second = None
     path = [city] if city else []
     for name in (second, third):
         if name and name not in path:

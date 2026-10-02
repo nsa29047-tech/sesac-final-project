@@ -65,13 +65,13 @@ sesac-final-project/
 2. **필터링** (`channel_video_filter.py`): 소개란에 '가게' 또는 '장소'가 언급된 영상만 남기고 `filtered_channel_video_urls.txt` / `excluded_channel_video_urls.txt`로 나눕니다. 중국 소재 식당 제외는 이후 Places API 주소로 판별할 예정이라 이 단계에서는 하지 않습니다.
 3. **식당 정보 추출** (`extract_restaurant_info.py`):
    - yt-dlp로 소개란을 가져와 OpenAI로 식당 한국어 상호명·주소·국가코드를 추출
-   - Google Places API로 공식 상호명, 주소, 좌표, 평점, 영업 상태, 연락처, 영업시간을 조회. 음식 분류(대분류/세부/태그)와 가격 정보는 CSV에 저장하지 않고 Gemini 영상 분석 결과를 씁니다. 숙소(호텔 등)로 매칭된 식당은 `note`에 표시합니다
+   - Google Places API로 공식 상호명, 주소, 좌표, 평점, 영업 상태, 연락처, 영업시간을 조회. 음식 분류(대분류/세부/태그)와 가격 정보는 CSV에 저장하지 않고 Gemini 영상 분석 결과를 씁니다. 숙소(호텔·료칸 등)로 매칭된 장소는 영상 제목으로 판단합니다: 제목에 식당·식사·요리 관련 단어(레스토랑, 식당, 식사, 요리, 밥, 디너, 맛집)가 있으면 가져오고(`note`에 '숙소로 매칭됨' 표시), 없으면 호텔 후기·료칸 소개가 주 소재라고 보고 제외합니다. 같은 영상에서 300m 이내에 다른 식당 행이 있는 숙소 행도 식당 정보에 딸려 적힌 것으로 보고 뺍니다
    - Parse(guide.michelin.com) API로 미슐랭 현재 등급을 판별: 검색 결과 중 이름과 도시(또는 거리 주소)가 일치하는 식당만 채택하고, 일치하는 식당이 없으면 `NONE`. API는 현재 등급만 주므로 연도별 이력(`history`)은 비워 두고, 근거가 확인된 경우에만 따로 채웁니다. 무료 플랜의 분당 5회 제한 때문에 호출 사이에 약 12.5초 간격을 둡니다. `--michelin-fallback`을 주면 일치 식당이 없을 때 기존 Tavily 검색으로 한 번 더 확인합니다(호출 증가).
    - Parse API는 **하루 100회 제한**이 있어서(식당 약 240곳이면 3일), 전체 실행은 `--skip-michelin`으로 미슐랭을 건너뛰고(`note`에 '미슐랭 미조회' 표시) 나중에 `fill_michelin.py`로 하루 한도(기본 90회)만큼씩 채웁니다. 같은 식당이 여러 영상에 나오면 한 번만 조회하고, 한도에 도달하면 멈췄다가 다음 날 이어서 처리합니다. `google_cid`가 없는 행은 건너뜁니다. 미슐랭을 못 채운 행은 `load_restaurants.py`가 `michelin_status`를 만들지 않습니다.
    - 건마다 CSV에 즉시 기록해 중간에 중단되어도 결과가 보존되며, 완료 후 xlsx로 변환
 4. **지역 보강** (`enrich_regions.py`): 3번 CSV의 `google_place_id`로 Places Details의 `addressComponents`에서 시 > 구/군 > 동·면(서울특별시 > 마포구 > 연남동, 성남시 > 분당구 > 정자동)을 뽑아 `data/restaurant_regions.csv`에 건별로 저장합니다. 없는 단계는 건너뛰고 있는 데까지만 저장하며(안동시는 시만, 도로명 주소라 동이 없으면 구까지), 도로명은 쓰지 않습니다. 식당당 Details 1회이고, 재실행하면 이어서 처리합니다. `--limit`으로 샘플을 먼저 검증하세요. "OO역/OO 근처" 질문은 지역 컬럼이 아니라 식당의 위경도로 반경 검색합니다(질문 시점에 지명의 좌표를 조회). DB 적재 스크립트는 아직 없습니다.
 5. **영상 분석** (`extract_video_notes.py`): 3번의 CSV를 가게 목록으로 삼아, Gemini API에 영상 URL을 직접 넘겨 메뉴·분위기·대분류/세부 분류·태그를 추출합니다. 한 영상에 가게가 여러 곳이면 가게마다 따로 호출하며, 결과는 `data/video_notes/{model}/{video_id}__{google_cid}.json`에 저장됩니다. Google 매칭에 실패한 가게는 건너뜁니다. 자막은 더 이상 수집하지 않습니다.
-6. **DB 적재**: `load_restaurants.py`(식당·영업시간·미슐랭) → `load_notes.py`(카테고리·태그·메뉴·노트) → `embed_chunks.py`(청크 임베딩). 모두 여러 번 실행해도 중복되지 않습니다.
+6. **DB 적재**: `load_restaurants.py`(식당·영업시간·미슐랭) → `load_regions.py`(지역 계층과 `restaurants.region_id`) → `load_notes.py`(카테고리·태그·메뉴·노트) → `embed_chunks.py`(청크 임베딩). 모두 여러 번 실행해도 중복되지 않습니다.
 
 ## DB 스키마
 
@@ -81,7 +81,7 @@ sesac-final-project/
 |---|---|
 | `videos` | 영상 (video_id, url, title) |
 | `restaurants` | 식당 마스터. `google_cid`(Google Maps URL의 cid)로 중복 제거 |
-| `regions` | 지역 계층 (시 > 구/군 > 동·면, `parent_id`, 최대 3단계). `restaurants.region_id`는 가장 하위 지역을 가리킴. 이미 적용한 DB는 `migrate_regions.sql` 실행 |
+| `regions` | 지역 계층 (시 > 구/군 > 동·면, `parent_id`, 최대 3단계). `restaurants.region_id`는 가장 하위 지역을 가리킴. 이미 적용한 DB는 `migrate_regions.sql`, 안 쓰는 컬럼 정리는 `migrate_trim_columns.sql` 실행 |
 | `restaurant_hours` | 요일별 영업시간 (하루 여러 구간, 휴무, 자정 넘김 지원) |
 | `michelin_status` | 미슐랭 현재 상태 (등재 여부, 최신 등급, 현재 등재 중 여부) |
 | `michelin_records` | 미슐랭 연도별 이력 |
@@ -132,6 +132,7 @@ uv run python src/pipeline/enrich_regions.py --limit 10 --output data/restaurant
 createdb restaurants
 psql -d restaurants -f src/db/restaurant_schema.sql          # 스키마는 한 번만 실행
 uv run python src/db/load_restaurants.py data/restaurants_info.xlsx "$POSTGRES_URI"
+uv run python src/db/load_regions.py                         # 지역 계층과 restaurants.region_id 연결 (먼저 --dry-run 권장)
 psql -d restaurants -f src/db/restaurant_chunks.sql          # pgvector 필요 (이전 스키마 DB는 migrate_notes.sql 먼저)
 uv run python src/pipeline/extract_video_notes.py --stores-csv data/restaurants_info.csv
 uv run python src/db/load_notes.py
@@ -150,7 +151,7 @@ uv run langgraph dev
 - [x] 영상 자막 수집 (Gemini 영상 분석으로 대체되어 더 이상 쓰지 않음)
 - [x] 식당 정보 추출 (Google Places, 미슐랭)
 - [x] DB 스키마 설계 및 적재 스크립트
-- [ ] 지역(시 > 구/군 > 동): 스키마와 보강 스크립트 작성, 200개 영상의 223곳 실행 완료(`data/restaurant_regions.csv`). DB 적재 스크립트(`load_regions.py`)는 아직
+- [ ] 지역(시 > 구/군 > 동): 스키마와 보강 스크립트 작성, 200개 영상의 223곳 실행 완료(`data/restaurant_regions.csv`). DB 적재 스크립트(`load_regions.py`)는 작성했고(DB에 마이그레이션은 적용함) 적재 실행은 아직
 - [ ] 메뉴·특징 등 비정형 정보 추출 및 벡터 스토어 적재
 - [ ] LangGraph 챗봇 구현 (현재 `app.py`는 빈 그래프)
 - [ ] n8n 자동화

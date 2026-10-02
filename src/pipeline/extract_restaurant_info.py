@@ -33,11 +33,12 @@ import re
 import csv
 import time
 import random
+import math
 import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 import requests
 import yt_dlp
@@ -269,6 +270,47 @@ def is_lodging_place(place: Dict[str, Any]) -> bool:
     return "lodging" in (place.get("types") or []) or primary == "lodging" or primary.endswith("hotel")
 
 
+# 숙소(호텔·료칸 등)로 매칭된 장소는 영상 제목으로 판단한다: 제목에 식당·식사·요리 관련 단어가 있으면 가져오고(식당 방문기),
+# 없으면 호텔 후기·료칸 소개가 주 소재라고 보고 제외한다. 해외 호텔 후기 영상에 호텔 정보만 적혀 있는 경우가 많아서다.
+FOOD_TITLE_WORDS = ("레스토랑", "식당", "식사", "요리", "밥", "디너", "맛집")
+LODGING_NOTE = "숙소로 매칭됨"
+LODGING_NEAR_M = 300   # 같은 영상에서 이 거리 안에 다른 식당 행이 있으면 숙소 행은 식당 정보에 딸려 적힌 것으로 보고 뺀다
+
+
+def has_food_title(title: str) -> bool:
+    return any(w in (title or "") for w in FOOD_TITLE_WORDS)
+
+
+def _row_distance_m(a: Dict[str, Any], b: Dict[str, Any]) -> Optional[float]:
+    try:
+        la1, lo1, la2, lo2 = (math.radians(float(x)) for x in (
+            a["google_latitude"], a["google_longitude"], b["google_latitude"], b["google_longitude"]))
+    except (TypeError, ValueError):
+        return None
+    h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
+    return 2 * 6371000 * math.asin(math.sqrt(h))
+
+
+def drop_redundant_lodging(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """같은 영상에서 숙소로 매칭된 행과 같은 주소이거나 근처(LODGING_NEAR_M)에 숙소가 아닌 식당 행이 있으면 그 숙소 행을 뺀다. (뺀 이름 목록도 돌려준다)"""
+    kept, dropped = [], []
+    for r in rows:
+        if LODGING_NOTE in str(r.get("note", "")):
+            near = []
+            for o in rows:
+                if o is r or LODGING_NOTE in str(o.get("note", "")):
+                    continue
+                d = _row_distance_m(r, o)
+                same_address = bool(r.get("google_formatted_address")) and r.get("google_formatted_address") == o.get("google_formatted_address")
+                if same_address or (d is not None and d <= LODGING_NEAR_M):   # 같은 주소이거나 근처(거리 0m 포함)
+                    near.append(o)
+            if near:
+                dropped.append(r["korean_name"])
+                continue
+        kept.append(r)
+    return kept, dropped
+
+
 # -------------------------------------------------------------
 # 2. [Step 1] yt-dlp: 유튜브 설명 가져오기
 # -------------------------------------------------------------
@@ -282,6 +324,12 @@ def get_youtube_description(url: str) -> dict:
 # -------------------------------------------------------------
 # 3. [Step 2] OpenAI: 한국 상호명, 주소, 국가코드 추출
 # -------------------------------------------------------------
+def clean_country_code(code: Optional[str]) -> str:
+    """LLM 이 country_code 에 깨진 문자열을 넣는 경우가 있어(예: 'IT}]} ```...', 'KR},{', 'ES.') 앞의 알파벳 2글자만 남긴다. 없으면 빈 문자열."""
+    m = re.match(r"\s*([A-Za-z]{2})(?![A-Za-z])", code or "")
+    return m.group(1).upper() if m else ""
+
+
 def extract_stores_from_description(title: str, description: str) -> StoreExtractionResult:
     if not description.strip():
         return StoreExtractionResult(has_store_info=False, stores=[])
@@ -290,6 +338,8 @@ def extract_stores_from_description(title: str, description: str) -> StoreExtrac
 다음 유튜브 영상의 제목과 설명에서 소개된 음식점의 '한국어 상호명(korean_name)', '주소(address)', '2자리 국가코드(country_code: KR, JP, US, FR 등)'를 추출하세요.
 - 여러 가게가 있으면 각각 분리하여 목록으로 만드세요.
 - 가게 정보가 없으면 has_store_info를 false로 설정하세요.
+- 유튜브 채널명(예: 비밀이야)과 건물·단지 이름은 상호명이 아닙니다. 식당 이름을 찾을 수 없으면 그 가게는 목록에서 제외하세요.
+- country_code 는 반드시 대문자 알파벳 2글자만 쓰세요(예: KR). 다른 문자나 설명을 넣지 마세요.
 
 [영상 제목]: {title}
 [영상 설명]:
@@ -304,7 +354,11 @@ def extract_stores_from_description(title: str, description: str) -> StoreExtrac
         response_format=StoreExtractionResult,
     )
     parsed = response.choices[0].message.parsed
-    return parsed if parsed is not None else StoreExtractionResult(has_store_info=False, stores=[])
+    if parsed is None:
+        return StoreExtractionResult(has_store_info=False, stores=[])
+    for store in parsed.stores:
+        store.country_code = clean_country_code(store.country_code)
+    return parsed
 
 
 # -------------------------------------------------------------
@@ -459,9 +513,12 @@ def search_restaurant_google(korean_name: str, address: Optional[str] = None, co
     place = choose_place(korean_name, address, country_code, places)
     if place is None:
         return None
+    return place_to_info(place)
 
+
+def place_to_info(place: Dict[str, Any]) -> Dict[str, Any]:
+    """Places 응답의 장소 1개를 파이프라인에서 쓰는 dict 로 바꾼다."""
     regular_hours = place.get("regularOpeningHours", {}) or {}
-
     return {
         "place_id": place.get("id"),
         "official_local_name": place.get("displayName", {}).get("text"),
@@ -779,6 +836,25 @@ def apply_michelin(row: Dict[str, Any], m_info: "MichelinInfo") -> None:
     row["source_urls"] = " | ".join(m_info.source_urls)
 
 
+def fill_google_fields(row: Dict[str, Any], g_info: Dict[str, Any]) -> None:
+    """Google Places 결과를 CSV 행에 채운다. process_video 와 수동 수락(매칭 보정)이 같이 쓴다."""
+    row["google_official_name"] = g_info.get("official_local_name", "")
+    row["google_formatted_address"] = g_info.get("formatted_address", "")
+    row["google_rating"] = g_info.get("rating", "")
+    row["google_user_rating_count"] = g_info.get("user_rating_count", "")
+    row["google_cid"] = g_info.get("cid", "")
+    row["google_maps_url"] = g_info.get("maps_url", "")
+    row["google_place_id"] = g_info.get("place_id") or ""
+    row["google_latitude"] = g_info["lat"] if g_info.get("lat") is not None else ""
+    row["google_longitude"] = g_info["lng"] if g_info.get("lng") is not None else ""
+    row["google_business_status"] = g_info.get("business_status", "")
+    row["google_phone"] = g_info.get("phone", "")
+    row["google_website"] = g_info.get("website", "")
+    row["google_opening_hours"] = g_info.get("opening_hours", "")
+    if g_info.get("is_lodging"):
+        row["note"] += LODGING_NOTE + " 확인 필요: 식당이 아닌 호텔 등으로 매칭됐을 수 있음; "
+
+
 def process_video(url: str, v_idx: int, total: int) -> Optional[List[Dict[str, Any]]]:
     """영상 1개를 처리해 CSV 행 목록을 반환한다. 일시적 오류(영상 조회/상호명 추출 실패)면 None (기록하지 않아 재실행 시 재시도)."""
     tag = f"[{v_idx}/{total}]"
@@ -805,6 +881,7 @@ def process_video(url: str, v_idx: int, total: int) -> Optional[List[Dict[str, A
                  "video_title": video_data['title'], "note": "가게 정보 없음"}]
 
     rows = []
+    excluded: List[str] = []   # 숙소 중심 영상이라 제외한 가게
     for store in extracted.stores:
         row = {k: "" for k in FIELDNAMES}
         row["video_url"] = url
@@ -821,24 +898,15 @@ def process_video(url: str, v_idx: int, total: int) -> Optional[List[Dict[str, A
         except Exception as e:
             row["note"] += f"Google 조회 실패: {e}; "
 
+        if g_info and g_info.get("is_lodging") and not has_food_title(video_data["title"]):
+            excluded.append(store.korean_name)
+            print(f"{tag}   ⏭️ 숙소 중심 영상이라 제외: {store.korean_name} -> {g_info.get('official_local_name')}")
+            continue
+
         official_name = store.korean_name
         if g_info:
             official_name = g_info["official_local_name"] or store.korean_name
-            row["google_official_name"] = g_info.get("official_local_name", "")
-            row["google_formatted_address"] = g_info.get("formatted_address", "")
-            row["google_rating"] = g_info.get("rating", "")
-            row["google_user_rating_count"] = g_info.get("user_rating_count", "")
-            row["google_cid"] = g_info.get("cid", "")
-            row["google_maps_url"] = g_info.get("maps_url", "")
-            row["google_place_id"] = g_info.get("place_id") or ""
-            row["google_latitude"] = g_info["lat"] if g_info.get("lat") is not None else ""
-            row["google_longitude"] = g_info["lng"] if g_info.get("lng") is not None else ""
-            row["google_business_status"] = g_info.get("business_status", "")
-            row["google_phone"] = g_info.get("phone", "")
-            row["google_website"] = g_info.get("website", "")
-            row["google_opening_hours"] = g_info.get("opening_hours", "")
-            if g_info.get("is_lodging"):
-                row["note"] += "숙소로 매칭됨 확인 필요: 식당이 아닌 호텔 등으로 매칭됐을 수 있음; "
+            fill_google_fields(row, g_info)
             print(f"{tag}   구글 공식명: {official_name} / {g_info.get('formatted_address')}")
         else:
             row["note"] += "Google 매칭 실패(또는 후보 불일치): 사람이 확인 필요; "
@@ -863,6 +931,14 @@ def process_video(url: str, v_idx: int, total: int) -> Optional[List[Dict[str, A
 
         rows.append(row)
         time.sleep(random.uniform(*STORE_DELAY))
+
+    rows, redundant = drop_redundant_lodging(rows)
+    for name in redundant:
+        print(f"{tag}   ⏭️ 같은 영상의 식당 근처 숙소 행이라 제외: {name}")
+    excluded += redundant
+    if not rows:   # 모든 가게가 제외되면 영상 자체는 처리한 것으로 남기도록 안내 행을 한 줄 둔다
+        rows = [{**{k: "" for k in FIELDNAMES}, "video_url": url, "video_title": video_data["title"],
+                 "note": "숙소 중심 영상이라 제외(제목 기준): " + ", ".join(excluded)}]
     return rows
 
 
