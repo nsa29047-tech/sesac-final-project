@@ -9,7 +9,8 @@ restaurants / videos 가 채워져 있어야 한다. 결과 JSON의 google_cid �
   - menus             : 메뉴/음료. (restaurant_id, video_id) 단위로 지우고 다시 넣는다.
   - video_restaurant_notes : 컨셉/분위기/총평/임베딩용 요약 + 원본 JSON
 
-사용: uv run python src/db/load_notes.py [--model gemini-3.5-flash-lite] [--dry-run]
+사용: uv run python src/db/load_notes.py [--model gemini-3.5-flash-lite] [--video-id ID ...] [--dry-run]
+      --video-id 를 주면 그 영상의 결과 JSON만 적재한다(여러 번 지정 가능). 없으면 모델 폴더의 전체.
       POSTGRES_URI 환경변수(.env)를 사용한다.
 """
 import argparse
@@ -42,14 +43,14 @@ def timestamp_to_sec(text):
 
 
 def menu_rows(note):
-    """추출 JSON -> menus 행 목록 [(item_type, name, cooking, taste, tips, price, is_signature, evidence, first_appearance_sec)]"""
+    """추출 JSON -> menus 행 목록 [(item_type, name, cooking, taste, tips, price, evidence, first_appearance_sec)]"""
     rows = []
     for m in note.get("menus", []):
         rows.append(("FOOD", m["name"], m.get("cooking_features"), m.get("taste_review"), m.get("tips"),
-                     m.get("price"), bool(m.get("is_signature")), m.get("evidence"),
+                     m.get("price"), m.get("evidence"),
                      timestamp_to_sec(m.get("first_appearance"))))
     for d in note.get("drinks", []):
-        rows.append(("DRINK", d["name"], None, d.get("review"), None, None, False, None, None))
+        rows.append(("DRINK", d["name"], None, d.get("review"), None, None, None, None))
     return rows
 
 
@@ -79,8 +80,8 @@ def load_note(cur, note):
             continue
         seen.add((row[0], row[1]))
         cur.execute("""INSERT INTO menus (restaurant_id, video_id, item_type, name, cooking_features, taste_review,
-                       tips, price_text, is_signature, evidence, first_appearance_sec)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       tips, price_text, evidence, first_appearance_sec)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (rid, vid, *row))
 
     cur.execute("""
@@ -96,8 +97,10 @@ def load_note(cur, note):
     return f"{note['korean_name']}: 메뉴/음료 {len(seen)}개, 태그 {len(note.get('cuisine_tags', []))}개"
 
 
-def main(model, dry_run):
+def main(model, dry_run, video_ids=None):
     files = sorted((NOTES_DIR / model).glob("*.json"))
+    if video_ids:
+        files = [f for f in files if f.name.split("__")[0] in set(video_ids)]
     if not files:
         print(f"{NOTES_DIR / model} 에 결과 JSON이 없습니다.")
         return
@@ -127,6 +130,7 @@ def main(model, dry_run):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="영상 추출 결과를 DB에 적재한다.")
     ap.add_argument("--model", default="gemini-3.5-flash-lite")
+    ap.add_argument("--video-id", action="append", default=[], help="이 영상의 결과만 적재 (여러 번 지정 가능)")
     ap.add_argument("--dry-run", action="store_true", help="DB 접속 없이 적재 대상만 출력")
     args = ap.parse_args()
-    main(args.model, args.dry_run)
+    main(args.model, args.dry_run, args.video_id)

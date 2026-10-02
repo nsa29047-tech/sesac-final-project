@@ -80,7 +80,6 @@ SYSTEM_PROMPT = """너는 미식 유튜브 영상에서 식당 정보를 구조�
   대상 가게가 영상에 나오지 않으면 그 가게 항목은 menus를 빈 목록으로 두고 나머지는 null로 둔다.
 - 상호명(restaurant_name)은 [대상 가게]의 이름을 그대로 쓴다. 인사말의 채널명(예: 비밀이야)은 식당명이 아니다.
 - 메뉴는 구체적인 요리명만 넣는다. 파스타, 생선, 와인 같은 범주나 주류는 메뉴에서 제외한다(주류는 drinks에).
-- is_signature는 유튜버가 대표·추천이라고 분명히 말한 메뉴에만 true로 한다.
 - category_broad, category_detail, cuisine_tags는 식당이 실제로 내는 음식을 근거로 정한다. 확신이 없으면 category_detail은 null, cuisine_tags는 비운다.
   cuisine_tags에는 요리와 조리 키워드만 넣고 술, 와인, 재료 일반명은 넣지 않는다.
 - 메뉴마다 근거를 evidence에 남긴다. 발언이면 원문 그대로, 화면 근거면 '(화면) ...' 형식으로 쓰고 가능하면 MM:SS 시각을 붙인다.
@@ -168,7 +167,7 @@ def process_video(video_id: str, stores: List[dict], model: str) -> None:
             seen.add(cid)
             targets.append(store)
     if not targets:
-        return
+        return "skip"
 
     others = [s for s in stores if s not in targets]
     url = f"https://www.youtube.com/watch?v={video_id}"
@@ -180,7 +179,7 @@ def process_video(video_id: str, stores: List[dict], model: str) -> None:
             raise ValueError("구조화 응답 파싱 실패")
     except Exception as e:
         print(f"[fail] {video_id} ({len(targets)}곳 전체): {e}")
-        return
+        return "fail"
 
     usage = response.usage_metadata
     usage_info = {
@@ -219,19 +218,42 @@ def process_video(video_id: str, stores: List[dict], model: str) -> None:
         f"       호출 1회: 가게 {len(targets)}곳, 입력 {usage.prompt_token_count:,}토큰, "
         f"출력 {usage.candidates_token_count:,}토큰, {usage_info['seconds']}초"
     )
+    return "ok"
+
+
+MAX_CONSECUTIVE_FAILS = 3   # 연속으로 이만큼 실패하면 쿼터 소진 등으로 보고 이번 실행을 멈춘다(다시 실행하면 이어서 처리)
+
+
+def pending_videos(by_video: Dict[str, List[dict]], model: str) -> List[str]:
+    """google_cid 가 있는 가게 중 결과 JSON이 아직 없는 가게가 하나라도 있는 영상(영상 ID 순)."""
+    pending = []
+    for vid, stores in sorted(by_video.items()):
+        cids = {s["google_cid"].strip() for s in stores if s["google_cid"].strip()}
+        if any(not output_path(model, vid, c).exists() for c in cids):
+            pending.append(vid)
+    return pending
 
 
 def main(stores_csv: Path, video_ids: List[str], model: str, limit: Optional[int]) -> None:
     by_video = load_stores(stores_csv)
-    targets = video_ids or sorted(by_video)
+    targets = video_ids or pending_videos(by_video, model)
+    total = len(targets)
     if limit:
         targets = targets[:limit]
+    print(f"처리 안 된 영상 {total}개 중 이번에 {len(targets)}개를 처리합니다.")
+
+    fails = 0
     for vid in targets:
         stores = by_video.get(vid, [])
         if not stores:
             print(f"[skip] {vid} (CSV에 가게 정보 없음)")
             continue
-        process_video(vid, stores, model)
+        status = process_video(vid, stores, model)
+        fails = fails + 1 if status == "fail" else 0 if status == "ok" else fails
+        if fails >= MAX_CONSECUTIVE_FAILS:
+            print(f"연속 {fails}번 실패해서 이번 실행을 멈춥니다(쿼터 소진·서버 과부하 가능). 잠시 뒤 같은 명령을 다시 실행하면 이어서 처리합니다.")
+            break
+    print(f"남은 영상 {len(pending_videos(by_video, model)) if not video_ids else '(--video-id 지정 실행)'}개")
 
 
 if __name__ == "__main__":
@@ -239,6 +261,6 @@ if __name__ == "__main__":
     ap.add_argument("--stores-csv", type=Path, default=DEFAULT_STORES_CSV, help="가게 목록 CSV (extract_restaurant_info.py 결과)")
     ap.add_argument("--video-id", action="append", default=[], help="영상 ID (여러 번 지정 가능). 없으면 CSV의 전체 영상")
     ap.add_argument("--model", default=DEFAULT_MODEL, help=f"Gemini 모델명 (기본 {DEFAULT_MODEL})")
-    ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--limit", type=int, default=None, help="이번 실행에서 처리할(아직 처리 안 된) 영상 수. 반복 실행하면 다음 영상부터 이어서 처리한다")
     args = ap.parse_args()
     main(args.stores_csv, args.video_id, args.model, args.limit)

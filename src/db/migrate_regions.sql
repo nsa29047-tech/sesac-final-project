@@ -1,3 +1,5 @@
+-- [폐기] regions 계층 테이블은 restaurants.region_1/2/3 컬럼으로 대체되었다. 새 DB는 restaurant_schema.sql 만 적용하고,
+-- 이 파일을 이미 적용한 DB는 migrate_simplify_schema.sql 로 컬럼 방식으로 옮긴다. 아래는 과거 기록으로만 남긴다.
 -- 이미 restaurant_schema.sql 을 적용한 DB에 지역(regions)을 추가하는 마이그레이션. 여러 번 실행해도 안전하다.
 BEGIN;
 

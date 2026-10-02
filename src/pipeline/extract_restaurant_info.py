@@ -676,8 +676,7 @@ def check_michelin_status_tavily(official_name: str, korean_name: str, address: 
 # -------------------------------------------------------------
 # 5-1. [Step 4 기본] 미슐랭 판별: Parse(guide.michelin.com) API
 # -------------------------------------------------------------
-# API는 "현재" 등급(distinction)만 주고 연도별 이력은 주지 않는다. 그래서 history 는 비워 두고,
-# 이력은 근거가 확인된 경우에만 따로 채운다.
+# API는 "현재" 등급(distinction)만 주고 연도별 이력은 주지 않는다. 그래서 연도별 이력은 저장하지 않는다.
 # 같은 이름의 다른 도시 지점이 검색되므로 이름뿐 아니라 도시(또는 거리 주소)까지 일치하는 후보만 채택한다.
 MICHELIN_API_LIMIT = 5            # 검색 1회당 가져올 후보 수. 호출마다 크레딧을 쓴다.
 MICHELIN_MIN_INTERVAL = 12.5      # 무료 플랜 분당 5회 제한을 지키는 호출 간격(초). 워커 간에 공유한다.
@@ -823,7 +822,7 @@ FIELDNAMES = [
     "google_rating", "google_user_rating_count", "google_cid", "google_maps_url", "google_place_id",
     "google_latitude", "google_longitude",
     "google_business_status", "google_phone", "google_website", "google_opening_hours",
-    "is_michelin", "latest_grade", "history",
+    "is_michelin", "latest_grade",
     "source_urls", "note",
 ]
 
@@ -832,7 +831,6 @@ def apply_michelin(row: Dict[str, Any], m_info: "MichelinInfo") -> None:
     """미슐랭 판별 결과를 CSV 행에 채운다. process_video 와 fill_michelin.py 가 같이 쓴다."""
     row["is_michelin"] = m_info.is_michelin
     row["latest_grade"] = m_info.latest_grade.value
-    row["history"] = "; ".join(f"{h.edition}:{h.grade.value}" for h in m_info.history)
     row["source_urls"] = " | ".join(m_info.source_urls)
 
 

@@ -71,7 +71,7 @@ def main(csv_path: Path, max_calls: int) -> None:
     copied = 0
     for cid in [c for c in by_cid if c in known]:
         for r in by_cid.pop(cid):
-            for col in ("is_michelin", "latest_grade", "history", "source_urls"):
+            for col in ("is_michelin", "latest_grade", "source_urls"):
                 r[col] = known[cid][col]
             r["note"] = _PENDING_NOTE_RE.sub("", r["note"])
             copied += 1

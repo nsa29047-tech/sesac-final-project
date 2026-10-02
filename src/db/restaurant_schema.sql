@@ -1,6 +1,6 @@
 -- 맛집 RAG 챗봇 테이블 설계 v2 (PostgreSQL 16, restaurants_info.xlsx 실제 컬럼 기준)
 -- 엑셀 1행 = "영상 1개 x 식당 1개" 가 비정규화된 형태 -> 아래처럼 분리한다.
---   정형(SQL search): videos / restaurants / regions / restaurant_tags / restaurant_hours / michelin_* / menus
+--   정형(SQL search): videos / restaurants(region_1~3 포함) / restaurant_tags / restaurant_hours / michelin_* / menus
 --   비정형(RAG search): video_restaurant_notes(원문) + restaurant_chunks(임베딩, restaurant_chunks.sql)
 
 BEGIN;
@@ -12,23 +12,6 @@ CREATE TABLE videos (
     title       VARCHAR(300) NOT NULL,
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
-
--- 1-1. 지역 (시 -> 구/군 -> 동·면, 최대 3단계) ---------------------------------------------------
--- Places API addressComponents 에서 뽑은 계층형 지역. 국내는 서울특별시 > 마포구 > 연남동처럼 시, 구/군, 동까지,
--- 없는 단계(안동시는 시만, 도로명 주소라 동이 없으면 구까지)는 있는 데까지만 저장한다. 도로명은 쓰지 않는다.
--- 식당은 가장 하위 지역 하나만 가리키고(restaurants.region_id), 상위 지역 검색은 parent_id 를 따라 올라가거나 내려가서 한다.
--- "OO역/OO 근처" 질문은 이 테이블이 아니라 restaurants.latitude/longitude 로 반경 검색한다.
-CREATE TABLE regions (
-    region_id    SERIAL       PRIMARY KEY,
-    country_code CHAR(2)      NOT NULL,
-    parent_id    INT          REFERENCES regions ON DELETE CASCADE,
-    level        SMALLINT     NOT NULL CHECK (level BETWEEN 1 AND 3),   -- 1=시, 2=구/군, 3=동·면. 없는 단계는 건너뛰고 있는 데까지만
-    name         VARCHAR(100) NOT NULL,                                 -- Places 응답의 long_name (languageCode 로 요청한 언어)
-    CHECK ((level = 1 AND parent_id IS NULL) OR (level > 1 AND parent_id IS NOT NULL))
-);
--- parent_id 가 NULL 인 최상위 행도 중복되지 않게 COALESCE 로 유니크 처리
-CREATE UNIQUE INDEX uq_regions ON regions (country_code, COALESCE(parent_id, 0), level, name);
-CREATE INDEX idx_regions_parent ON regions (parent_id);
 
 -- 2. 식당 마스터 (Google Places 기준으로 중복 제거) -------------------------------
 -- 주의: google_cid 는 부호없는 64bit 정수(예: 14137247191763917659)라 BIGINT 범위(9.22e18)를 넘는다.
@@ -42,7 +25,12 @@ CREATE TABLE restaurants (
     name_ko             VARCHAR(200),                    -- 한국어 표기(영상 기준 추출명)
     country_code        CHAR(2)       NOT NULL,
     formatted_address   VARCHAR(500),                    -- google_formatted_address
-    region_id           INT REFERENCES regions,          -- 가장 하위 지역(최대 3단계). 상위 지역은 regions.parent_id 로 조회
+    -- 지역(시 > 구/군 > 동·면, Places addressComponents 에서 추출). 없는 단계는 건너뛰고 앞에서부터 채운다
+    -- (안동시는 region_1만, 도로명 주소라 동이 없으면 region_2까지). 도로명은 쓰지 않는다. 지역명은 Places 응답의 long_name(요청 언어).
+    -- "OO역/OO 근처" 질문은 지역 컬럼이 아니라 latitude/longitude 로 반경 검색한다.
+    region_1            VARCHAR(100),
+    region_2            VARCHAR(100),
+    region_3            VARCHAR(100),
     latitude            NUMERIC(9,6),                   -- Places API location ("근처 식당" 검색용)
     longitude           NUMERIC(9,6),
     rating              NUMERIC(2,1),
@@ -52,27 +40,25 @@ CREATE TABLE restaurants (
     website             VARCHAR(300),
     category_broad      VARCHAR(50),                     -- 대분류(한식/일식/중식/양식/동남아식/인도식/중동식/기타). 영상 추출값(load_notes.py)
     category_detail     VARCHAR(50),                     -- 세부 분류(오마카세/파인다이닝/라멘 ...). 영상 추출값(load_notes.py)
-    opening_hours_raw   TEXT,                            -- 원문 보관(파싱 실패/재파싱 대비)
     places_fetched_at   TIMESTAMPTZ,
     created_at          TIMESTAMPTZ   NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_restaurants_country ON restaurants (country_code);
-CREATE INDEX idx_restaurants_region ON restaurants (region_id);
+CREATE INDEX idx_restaurants_region ON restaurants (country_code, region_1, region_2, region_3);
 
 -- 3. 영업시간 (google_opening_hours 파싱 결과) --------------------------------
--- 하루 여러 구간 가능(점심/저녁) -> seq. 휴무일은 행을 만들지 않고 is_closed 행 1개로 표현.
+-- 하루 여러 구간 가능(점심/저녁) -> seq. 휴무일은 open_time/close_time 이 NULL 인 행 1개로 표현한다
+-- (행이 없는 요일은 "휴무"가 아니라 "정보 없음"이라 구분을 위해 휴무 행을 남긴다).
 -- 자정을 넘기는 영업(5PM-1AM)은 close_time < open_time 으로 저장.
 CREATE TABLE restaurant_hours (
     restaurant_id BIGINT   NOT NULL REFERENCES restaurants ON DELETE CASCADE,
     day_of_week   SMALLINT NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),   -- 0=일 ... 6=토
     seq           SMALLINT NOT NULL DEFAULT 0,
-    is_closed     BOOLEAN  NOT NULL DEFAULT FALSE,
     open_time     TIME,
     close_time    TIME,
     PRIMARY KEY (restaurant_id, day_of_week, seq),
-    CHECK ((is_closed AND open_time IS NULL AND close_time IS NULL)
-        OR (NOT is_closed AND open_time IS NOT NULL AND close_time IS NOT NULL))
+    CONSTRAINT restaurant_hours_times_both_or_none CHECK ((open_time IS NULL) = (close_time IS NULL))   -- 둘 다 NULL 이면 휴무
 );
 -- google_open_now 는 조회 시점 값이라 저장하지 않는다. "지금 영업 중?"은 이 테이블 + 현지 시간으로 계산.
 
@@ -80,22 +66,13 @@ CREATE TABLE restaurant_hours (
 -- 현재 상태(1:1). is_michelin=false 인 식당도 "확인했고 미등재"라는 사실을 남기기 위해 행을 만든다.
 CREATE TABLE michelin_status (
     restaurant_id  BIGINT      PRIMARY KEY REFERENCES restaurants ON DELETE CASCADE,
-    -- 등급은 Parse API(현재 등급)로 판별한다. edition_type / is_active 는 CSV에 없고 적재할 때 is_michelin 에서 채운다. 판정 기준은 michelin_records.
-    is_michelin    BOOLEAN     NOT NULL,                 -- 한 번이라도 등재된 적 있음
-    edition_type   VARCHAR(20) NOT NULL,                 -- NONE / REGULAR ...
+    -- 등급은 Parse API(현재 등급)로 판별한다. 연도별 이력, 에디션 종류, 현재 등재 여부(is_michelin 과 같은 값)는 저장하지 않는다.
+    is_michelin    BOOLEAN     NOT NULL,                 -- 현재 미슐랭 가이드에 등재됨
     latest_grade   VARCHAR(20) NOT NULL,                 -- NONE / BIB_GOURMAND / 1_STAR / 2_STARS / 3_STARS / SELECTED / UNKNOWN(등재는 확인, 등급 근거 없음)
-    is_active      BOOLEAN     NOT NULL,                 -- 최신 에디션에 현재 등재 중인가
-    note           TEXT,
+    note          TEXT,
     checked_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 연도별 이력 (history "2025:3_STARS; 2026:3_STARS" 를 행으로 분리)
-CREATE TABLE michelin_records (
-    restaurant_id BIGINT      NOT NULL REFERENCES restaurants ON DELETE CASCADE,
-    year          SMALLINT    NOT NULL,
-    grade         VARCHAR(20) NOT NULL,
-    PRIMARY KEY (restaurant_id, year)
-);
 
 -- 판별 근거 URL(source_urls)은 사람이 검증할 때만 쓰므로 DB에 적재하지 않고 CSV/xlsx에만 둔다.
 
@@ -118,12 +95,10 @@ CREATE TABLE menus (
     video_id         VARCHAR(20)  REFERENCES videos ON DELETE SET NULL,
     item_type        VARCHAR(10)  NOT NULL DEFAULT 'FOOD' CHECK (item_type IN ('FOOD', 'DRINK')),
     name             VARCHAR(200) NOT NULL,
-    description      TEXT,
-    cooking_features TEXT,                                -- 조리법/식재료 디테일
+    cooking_features TEXT,                               -- 조리법/식재료 디테일
     taste_review     TEXT,                                -- 맛/식감 평가 (음료는 시음 평)
     tips             TEXT,                                -- 먹는 방법/추천 팁
     price_text       VARCHAR(100),                        -- 영상에서 확인된 가격 원문("1인 70,000원"). 통화/단위가 섞여 정형화하지 않음
-    is_signature     BOOLEAN      NOT NULL DEFAULT FALSE,
     evidence         TEXT,                                -- 근거 발언/화면 (시각 포함)
     first_appearance_sec INTEGER                          -- 영상에서 처음 등장하는 시각(초). 확인 안 되면 NULL
 );

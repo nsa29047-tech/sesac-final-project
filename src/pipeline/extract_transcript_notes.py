@@ -45,7 +45,6 @@ class Menu(BaseModel):
     taste_review: Optional[str] = Field(None, description="맛·식감에 대한 유튜버의 표현")
     tips: Optional[str] = Field(None, description="먹는 방법이나 추천 팁")
     price: Optional[str] = Field(None, description="자막에 언급된 가격. 없으면 null")
-    is_signature: bool = Field(False, description="유튜버가 대표·추천 메뉴라고 명시적으로 말한 경우에만 true")
     evidence: str = Field(description="이 메뉴 정보의 근거가 된 자막 문장 1~2개(원문 그대로)")
 
 
@@ -88,7 +87,6 @@ SYSTEM_PROMPT = """너는 미식 유튜브 영상의 자막(STT 스크립트)에
 - 자막은 한 식당을 소개하는 영상이다. 다른 식당이 잠깐 비교로 언급되어도 이 영상의 주인공 식당 정보만 추출한다.
 - 상호명은 자막이 아니라 사용자가 제공한 '소개란 가게 정보'를 따른다. 자막 인사말의 채널명(예: 비밀이야)은 식당명이 아니다.
 - 메뉴는 구체적인 요리명만 넣는다. 파스타, 생선, 와인 같은 범주나 주류는 메뉴에서 제외한다(주류는 drinks에).
-- is_signature는 유튜버가 대표·추천이라고 분명히 말한 메뉴에만 true로 한다.
 - category_broad, category_detail, cuisine_tags는 식당이 실제로 내는 음식을 근거로 정한다. 확신이 없으면 category_detail은 null, cuisine_tags는 비운다.
 - 메뉴마다 근거가 된 자막 문장을 evidence에 원문 그대로 남긴다.
 - 유튜버의 미식 표현(바삭함, 진한 육수 등)은 최대한 원래 표현을 살려 적는다.

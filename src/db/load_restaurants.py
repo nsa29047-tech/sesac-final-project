@@ -1,7 +1,8 @@
 """restaurants_info.xlsx -> PostgreSQL 적재 (restaurant_schema.sql 기준, 재실행해도 중복 없음)
 
-사용: python load_restaurants.py restaurants_info.xlsx "postgresql://user:pw@host/db"
-필요: pip install openpyxl psycopg2-binary
+사용: uv run python src/db/load_restaurants.py data/restaurants_info.xlsx [DSN]
+      DSN 을 생략하면 POSTGRES_URI 환경변수(.env)를 쓴다(접속 문자열이 명령줄·로그에 남지 않도록 생략을 권장).
+필요: pip install openpyxl psycopg2-binary python-dotenv
 """
 import re
 import sys
@@ -52,7 +53,10 @@ def _to24(h, m, mer):
 def parse_range(rng):
     """'4:30 – 11:00 PM' / '11:30 AM – 3:00 PM' -> (time, time). 시작에 AM/PM이 없으면 더 짧은 구간이 되는 쪽 선택."""
     norm = rng.replace(" ", " ").replace(" ", " ")
-    a, b = [x.strip() for x in norm.split("–")]
+    pieces = [x.strip() for x in norm.split("–")]
+    if len(pieces) != 2:   # 구분자가 없는 형식은 파싱하지 않는다
+        return None
+    a, b = pieces
     ma, mb = _T.fullmatch(a), _T.fullmatch(b)
     if not (ma and mb):
         return None
@@ -67,7 +71,7 @@ def parse_range(rng):
 
 
 def parse_hours(raw):
-    """-> [(day, seq, is_closed, open, close)], 파싱 불가 시 None (raw 는 restaurants 에 보존됨)"""
+    """-> [(day, seq, open, close)] (휴무는 open/close 가 None), 파싱 불가 시 None (원문은 CSV의 google_opening_hours 에 남아 있다)"""
     out = []
     for part in raw.split(" | "):
         day, _, body = part.partition(": ")
@@ -75,13 +79,16 @@ def parse_hours(raw):
             return None
         body = body.strip()
         if body == "Closed":
-            out.append((DAYS[day], 0, True, None, None))
+            out.append((DAYS[day], 0, None, None))
+            continue
+        if body == "Open 24 hours":   # 하루 종일 영업: 영업 중 여부 계산이 되도록 00:00~23:59 로 저장한다
+            out.append((DAYS[day], 0, time(0, 0), time(23, 59)))
             continue
         for seq, rng in enumerate(body.split(", ")):
             r = parse_range(rng)
             if r is None:          # 'Open 24 hours' 등
                 return None
-            out.append((DAYS[day], seq, False, r[0], r[1]))
+            out.append((DAYS[day], seq, r[0], r[1]))
     return out
 
 
@@ -118,22 +125,21 @@ def main(xlsx, dsn):
             INSERT INTO restaurants (google_cid, google_maps_url, google_place_id, name_official, name_ko,
                 country_code, latitude, longitude,
                 formatted_address, rating, rating_count, business_status, phone, website,
-                opening_hours_raw, places_fetched_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+                places_fetched_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
             ON CONFLICT (google_cid) DO UPDATE SET
                 google_place_id = EXCLUDED.google_place_id,
                 latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude,
                 rating = EXCLUDED.rating, rating_count = EXCLUDED.rating_count,
                 business_status = EXCLUDED.business_status,
                 phone = EXCLUDED.phone, website = EXCLUDED.website,
-                opening_hours_raw = EXCLUDED.opening_hours_raw,
                 places_fetched_at = now(), updated_at = now()
             RETURNING restaurant_id""",
                     (gcid, maps_url, s(r.get("google_place_id")), r["google_official_name"], s(r["korean_name"]),
                      r["country_code"], s(r.get("google_latitude")), s(r.get("google_longitude")),
                      s(r["google_formatted_address"]), r["google_rating"],
                      r["google_user_rating_count"], s(r["google_business_status"]),
-                     s(r["google_phone"]), s(r["google_website"]), s(r["google_opening_hours"])))
+                     s(r["google_phone"]), s(r["google_website"])))
         rid = cur.fetchone()[0]
 
         cur.execute("""INSERT INTO video_restaurant_mentions (video_id, restaurant_id, extracted_name, extracted_address)
@@ -148,38 +154,31 @@ def main(xlsx, dsn):
             else:
                 cur.execute("DELETE FROM restaurant_hours WHERE restaurant_id = %s", (rid,))
                 cur.executemany("""INSERT INTO restaurant_hours
-                    (restaurant_id, day_of_week, seq, is_closed, open_time, close_time) VALUES (%s,%s,%s,%s,%s,%s)""",
+                    (restaurant_id, day_of_week, seq, open_time, close_time) VALUES (%s,%s,%s,%s,%s)""",
                                 [(rid, *p) for p in parsed])
 
-        # edition_type / is_active 는 CSV에 없다. Parse API는 현재 가이드 등재 여부만 주므로 등재면 REGULAR, 현재 등재 중으로 본다.
         note = s(r["note"]) or ""
         if not s(r["latest_grade"]) or "미슐랭 미조회" in note or "미슐랭 조회 실패" in note:
             unchecked_michelin.append(s(r["korean_name"]))   # fill_michelin.py 로 채운 뒤 다시 적재하면 michelin_status 가 생긴다
             continue
         is_michelin = to_bool(r["is_michelin"])
         cur.execute("""
-            INSERT INTO michelin_status (restaurant_id, is_michelin, edition_type, latest_grade, is_active, note)
-            VALUES (%s,%s,%s,%s,%s,%s)
+            INSERT INTO michelin_status (restaurant_id, is_michelin, latest_grade, note)
+            VALUES (%s,%s,%s,%s)
             ON CONFLICT (restaurant_id) DO UPDATE SET is_michelin = EXCLUDED.is_michelin,
-                edition_type = EXCLUDED.edition_type, latest_grade = EXCLUDED.latest_grade,
-                is_active = EXCLUDED.is_active,
-                note = EXCLUDED.note, checked_at = now()""",
-                    (rid, is_michelin, "REGULAR" if is_michelin else "NONE", r["latest_grade"], is_michelin,
-                     s(r["note"])))
-
-        for item in (s(r["history"]) or "").split(";"):
-            if item.strip():
-                edition, grade = item.strip().rsplit(":", 1)
-                year = re.match(r"\d{4}", edition)  # '2017 홋카이도 특별판' 같은 에디션명은 앞 4자리 연도만 사용
-                if year is None:
-                    continue
-                cur.execute("""INSERT INTO michelin_records (restaurant_id, year, grade) VALUES (%s,%s,%s)
-                               ON CONFLICT (restaurant_id, year) DO UPDATE SET grade = EXCLUDED.grade""",
-                            (rid, int(year.group()), grade))
+                latest_grade = EXCLUDED.latest_grade, note = EXCLUDED.note, checked_at = now()""",
+                    (rid, is_michelin, r["latest_grade"], s(r["note"])))
 
     conn.commit()
     print(f"loaded {loaded} rows; skipped (google_cid 없음): {skipped_rows or 'none'}; hours not parsed for: {skipped_hours or 'none'}; 미슐랭 미확인(michelin_status 미적재): {len(unchecked_michelin)}곳")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    if len(sys.argv) > 2:
+        dsn = sys.argv[2]
+    else:
+        import os
+        from dotenv import find_dotenv, load_dotenv
+        load_dotenv(find_dotenv(usecwd=True))
+        dsn = os.environ["POSTGRES_URI"]
+    main(sys.argv[1], dsn)
