@@ -1,4 +1,4 @@
-# 작업 일지 (프로젝트 시작 ~ 10/1)
+# 작업 일지 (프로젝트 시작 ~ 10/2)
 
 > **작성 근거**: git 커밋(9/22, 9/30), 파일 수정 시각, 산출물(`data/`), 코드·README·CLAUDE.md.
 > 일일 메모나 대화 기록이 없어서 **9/30까지의 실제 작업 시간과 막힌 이유는 코드·산출물에서 추정**했습니다. 10/1은 작업 대화 기록을 바탕으로 정리했습니다.
@@ -15,6 +15,7 @@
 | 9/29 (화) | 자막 수집 이어받기, 식당 정보 추출 1차 결과 |
 | 9/30 (수) | 추출 개선·검증, Gemini 영상 분석 실험, 노트 적재 스크립트, 커밋 |
 | 10/1 (목) | 7개 영상으로 3~5번 파이프라인 테스트, 미슐랭 판별을 Parse API로 교체, 지역(시>구/군) 보강 설계·구현 |
+| 10/2 (금) | DB 스키마 정리(미사용 컬럼·테이블 삭제, `regions`를 `region_1~3` 컬럼으로 대체), 백업 후 Supabase 마이그레이션 적용 |
 
 ---
 
@@ -148,7 +149,55 @@
 
 ---
 
-## 전체 미해결 목록 (10/1 기준)
+## 10/2 (금)
+> 이 절은 DB 스키마 정리 세션만 기록합니다. 같은 날 앞서 한 작업(200개 영상 223곳 실행, DB 적재 등)은 CLAUDE.md의 "현재 진행 상황"을 참고하세요.
+
+**오늘 한 일**
+- **파이프라인/챗봇 브랜치 합치는 방법 정리**: 두 작업의 접점은 코드가 아니라 DB 스키마. 충돌 가능 지점은 `README.md`, `CLAUDE.md`, `restaurant_schema.sql`, `uv.lock`
+- **DB 스키마 정리** — 쓰지 않거나 정보가 중복인 컬럼·테이블을 코드에서 참조 위치를 확인한 뒤 삭제하고, 마이그레이션 `migrate_simplify_schema.sql` 하나로 통합해 Supabase에 적용(적용 후 검증 완료)
+
+| 대상 | 조치 | 이유 |
+|---|---|---|
+| `menus.description` | 삭제 | 적재하지 않아 항상 NULL |
+| `menus.is_signature` | 삭제 | 저장만 하고 읽는 곳 없음. 챗봇에서도 안 쓰기로 함 |
+| `michelin_records`, CSV `history` | 삭제 | Parse API는 현재 등급만 줘서 항상 비어 있었음 |
+| `michelin_status.edition_type`, `is_active` | 삭제 | `is_michelin`에서 유도되는 값이라 정보 없음. `checked_at`은 재조회 기준으로 유지 |
+| `regions` 테이블, `restaurants.region_id` | 삭제 후 `restaurants.region_1~3` 컬럼으로 대체 | 깊이가 3으로 고정이라 계층 테이블의 이점이 작고 조회가 복잡 |
+| `restaurant_hours.is_closed` | 삭제 | `open_time`/`close_time`이 NULL인지와 항상 같은 값. 휴무는 시간이 NULL인 행으로 유지 |
+| `restaurants.opening_hours_raw` | 삭제 | 읽는 곳 없음. 원문은 CSV에 있고 `data/` CSV 12개의 영업시간 문자열은 파싱 실패 0건 |
+
+- 연관 코드(`load_restaurants.py`, `load_notes.py`, `load_regions.py`, `extract_restaurant_info.py`, `extract_transcript_notes.py`, `extract_video_notes.py`, `fill_michelin.py`)와 README, CLAUDE.md 갱신. 결과 CSV는 23개에서 22개 컬럼
+- **적용 전 백업**: `backup_tables.py`를 만들어 6개 테이블(`restaurants` 224, `regions` 165, `restaurant_hours` 1,803, `menus` 297, `michelin_status` 89, `michelin_records` 0)을 `data/backup_20261002_192433/`에 CSV로 저장
+- **적용 결과 검증**: 삭제 대상 컬럼·테이블 0개 남음, 식당 224곳 모두 `region_1` 채워짐(`region_2` 143곳, `region_3` 19곳), 영업시간 1,803행·메뉴 297행 유지
+- 커밋 `934f7be`를 `feature/pipeline`으로 push (마이그레이션 수정분과 `backup_tables.py`는 아직 미커밋)
+
+**막히는 부분 & 해결 방법**
+| 문제 | 해결/현재 상태 |
+|---|---|
+| 문서·스키마 주석이 "미슐랭 판정 기준은 `michelin_records`"라고 적었는데 실제 데이터는 `michelin_status`에만 있었음 | 기준을 `michelin_status`로 정정하고 `michelin_records` 삭제 |
+| `pg_dump`가 이 PC에 없어 덤프 불가 | 설치 대신 `psycopg2`로 테이블별 CSV 백업 스크립트 작성 |
+| 마이그레이션 첫 실행 오류 `recursive query "path" column 5 has type ...` | `regions.name`이 `VARCHAR(100)`이라 재귀 쿼리의 배열 타입이 맞지 않았음. `::text` 캐스트로 수정, 읽기 전용 쿼리로 먼저 검증한 뒤 재실행. 트랜잭션이라 첫 실패 때 DB는 그대로였음 |
+| SQL Editor에서 검증 쿼리 결과가 마지막 것만 보임 | `UNION ALL`로 한 표에 모으는 검증 쿼리로 대체 |
+
+**주의할 점**
+- 삭제한 컬럼·테이블의 데이터는 DB에서 복구할 수 없음. 필요하면 위 백업 CSV와 `data/` 원본(CSV, 영상 분석 JSON)에서 되살림
+- 기존 `data/` CSV에는 아직 `history` 컬럼이 있어 `extract_restaurant_info.py`로 이어받기를 하면 컬럼 불일치 오류가 남
+- `--michelin-fallback`(Tavily) 경로는 `history`를 내부 계산에만 쓰고 저장하지 않는 상태로 남아 있음
+- `compare_chunking.py`(청킹 비교 실험)는 untracked 상태로 둠
+- 챗봇 브랜치에서 삭제된 컬럼·테이블(`regions`, `region_id`, `is_closed` 등)을 참조하는지 아직 확인하지 않음
+
+**해결해야 할 일**
+1. 미커밋 변경(마이그레이션 수정분, `backup_tables.py`, 문서) 커밋·push, `compare_chunking.py` 처리 결정
+2. 미슐랭 135곳을 `fill_michelin.py`로 채우기(하루 한도 100회, 기본 90회씩) 후 `load_restaurants.py` 재실행
+3. 나머지 169개 영상 Gemini 분석 → `load_notes.py` → `embed_chunks.py`. 전체 실행 전에 자막 방식 결과와 샘플 비교, 건수·예상 비용 공지(영상당 약 $0.027). `video_restaurant_notes`의 이전 실험 데이터 38건 정리 여부 결정
+4. Tavily 폴백 경로를 계속 쓸지 결정, 안 쓰면 `history` 관련 코드 정리
+5. 챗봇 브랜치에서 삭제 항목 참조 확인, 지역 질의는 `country_code`와 `region_1`을 함께 거는 방식으로 반영("중구"처럼 같은 이름이 여러 곳에 있음)
+6. `feature/pipeline` PR → main, 챗봇 브랜치에서 main merge(README·CLAUDE.md·스키마 충돌 해결)
+7. LangGraph 챗봇 구현(`src/app.py`는 현재 빈 그래프), n8n 자동화
+
+---
+
+## 전체 미해결 목록 (10/1 기준, 최신은 위 10/2 절 참고)
 
 **우선순위 높음**
 1. 3번 전체 실행(약 313개 영상): 호출 건수·비용 사전 안내, 소수 샘플 검증, 이어받기 지원. Parse 크레딧 한도 확인

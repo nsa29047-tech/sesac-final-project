@@ -21,10 +21,10 @@ BEGIN
                WHERE table_name = 'restaurants' AND column_name = 'region_id') THEN
         -- 각 지역의 조상 경로(위에서부터)를 구해 식당 컬럼에 채운다. 단계가 건너뛰어 저장된 지역은 앞에서부터 채워진 형태 그대로다.
         WITH RECURSIVE path AS (
-            SELECT region_id, parent_id, name, 1 AS depth, ARRAY[name] AS names
+            SELECT region_id, parent_id, name, 1 AS depth, ARRAY[name::text] AS names
             FROM regions WHERE parent_id IS NULL
             UNION ALL
-            SELECT c.region_id, c.parent_id, c.name, p.depth + 1, p.names || c.name
+            SELECT c.region_id, c.parent_id, c.name, p.depth + 1, p.names || c.name::text
             FROM regions c JOIN path p ON c.parent_id = p.region_id
         )
         UPDATE restaurants r
