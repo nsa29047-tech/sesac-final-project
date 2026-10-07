@@ -324,6 +324,9 @@ def get_youtube_description(url: str) -> dict:
 # -------------------------------------------------------------
 # 3. [Step 2] OpenAI: 한국 상호명, 주소, 국가코드 추출
 # -------------------------------------------------------------
+EXCLUDED_COUNTRY = "CN"   # 중국 본토만 제외(HK·MO·TW는 유지)
+
+
 def clean_country_code(code: Optional[str]) -> str:
     """LLM 이 country_code 에 깨진 문자열을 넣는 경우가 있어(예: 'IT}]} ```...', 'KR},{', 'ES.') 앞의 알파벳 2글자만 남긴다. 없으면 빈 문자열."""
     m = re.match(r"\s*([A-Za-z]{2})(?![A-Za-z])", code or "")
@@ -347,6 +350,8 @@ def extract_stores_from_description(title: str, description: str) -> StoreExtrac
 """
     response = client.beta.chat.completions.parse(
         model="gpt-4o-mini",
+        temperature=0,
+        seed=42,
         messages=[
             {"role": "system", "content": "너는 상호명, 주소, 국가코드를 정확하게 구조화하여 추출하는 전문가야."},
             {"role": "user", "content": prompt}
@@ -410,6 +415,8 @@ def choose_place(korean_name: str, address: Optional[str], country_code: str,
 """
     response = client.beta.chat.completions.parse(
         model="gpt-4o-mini",
+        temperature=0,
+        seed=42,
         messages=[
             {"role": "system", "content": "너는 식당 이름과 주소를 지도 데이터와 정확히 대조하는 전문가야."},
             {"role": "user", "content": prompt},
@@ -441,6 +448,8 @@ def guess_local_name(korean_name: str, address: Optional[str], country_code: str
     try:
         response = client.beta.chat.completions.parse(
             model="gpt-4o-mini",
+            temperature=0,
+            seed=42,
             messages=[
                 {"role": "system", "content": "너는 외국 식당의 한국어 표기를 원래 이름으로 복원하는 전문가야."},
                 {"role": "user", "content": prompt},
@@ -655,6 +664,8 @@ def check_michelin_status_tavily(official_name: str, korean_name: str, address: 
 
     response = client.beta.chat.completions.parse(
         model="gpt-4o-mini",
+        temperature=0,
+        seed=42,
         messages=[
             {"role": "system", "content": "너는 미슐랭 가이드 공식 데이터 분석 AI야. 근거 없는 추측은 하지 않아."},
             {"role": "user", "content": prompt}
@@ -880,7 +891,13 @@ def process_video(url: str, v_idx: int, total: int) -> Optional[List[Dict[str, A
 
     rows = []
     excluded: List[str] = []   # 숙소 중심 영상이라 제외한 가게
+    excluded_cn: List[str] = []   # 중국 소재라 제외한 가게
     for store in extracted.stores:
+        # 중국 본토(CN)는 대상에서 뺀다. 홍콩(HK)·마카오(MO)·대만(TW)은 유지한다. Places 호출 전에 걸러 비용도 아낀다.
+        if store.country_code == EXCLUDED_COUNTRY:
+            excluded_cn.append(store.korean_name)
+            print(f"{tag} 식당: {store.korean_name} ({store.country_code}) ⏭️ 중국 소재라 제외")
+            continue
         row = {k: "" for k in FIELDNAMES}
         row["video_url"] = url
         row["video_title"] = video_data['title']
@@ -935,8 +952,13 @@ def process_video(url: str, v_idx: int, total: int) -> Optional[List[Dict[str, A
         print(f"{tag}   ⏭️ 같은 영상의 식당 근처 숙소 행이라 제외: {name}")
     excluded += redundant
     if not rows:   # 모든 가게가 제외되면 영상 자체는 처리한 것으로 남기도록 안내 행을 한 줄 둔다
+        notes = []
+        if excluded:
+            notes.append("숙소 중심 영상이라 제외(제목 기준): " + ", ".join(excluded))
+        if excluded_cn:
+            notes.append("중국 소재라 제외: " + ", ".join(excluded_cn))
         rows = [{**{k: "" for k in FIELDNAMES}, "video_url": url, "video_title": video_data["title"],
-                 "note": "숙소 중심 영상이라 제외(제목 기준): " + ", ".join(excluded)}]
+                 "note": "; ".join(notes)}]
     return rows
 
 

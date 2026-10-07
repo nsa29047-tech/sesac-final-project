@@ -40,6 +40,8 @@ CREATE TABLE restaurants (
     website             VARCHAR(300),
     category_broad      VARCHAR(50),                     -- 대분류(한식/일식/중식/양식/동남아식/인도식/중동식/기타). 영상 추출값(load_notes.py)
     category_detail     VARCHAR(50),                     -- 세부 분류(오마카세/파인다이닝/라멘 ...). 영상 추출값(load_notes.py)
+    chef_name           VARCHAR(300),                    -- 대표 셰프 이름(여러 명이면 쉼표로 연결). 자막 추출 + 근거 확인된 것만, 없으면 NULL (load_chefs.py)
+    chef_info           TEXT,                            -- 셰프 경력·수상·특징 요약. 영상에서 한 말이라 검증된 사실이 아니다
     places_fetched_at   TIMESTAMPTZ,
     created_at          TIMESTAMPTZ   NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ   NOT NULL DEFAULT now()
@@ -100,7 +102,8 @@ CREATE TABLE menus (
     tips             TEXT,                                -- 먹는 방법/추천 팁
     price_text       VARCHAR(100),                        -- 영상에서 확인된 가격 원문("1인 70,000원"). 통화/단위가 섞여 정형화하지 않음
     evidence         TEXT,                                -- 근거 발언/화면 (시각 포함)
-    first_appearance_sec INTEGER                          -- 영상에서 처음 등장하는 시각(초). 확인 안 되면 NULL
+    first_appearance_sec INTEGER,                         -- 영상 분석: 음식이 화면에 처음 보이는 시각(초). 확인 안 되면 NULL
+    mentioned_sec    INTEGER                              -- 자막 분석: 서빙·시식 단서 또는 첫 언급 자막 시각(초). 화면 등장 시각이 아니라 추정치
 );
 CREATE INDEX idx_menus_restaurant ON menus (restaurant_id);
 CREATE UNIQUE INDEX uq_menus_item ON menus (restaurant_id, video_id, item_type, name);

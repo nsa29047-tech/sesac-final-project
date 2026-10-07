@@ -59,7 +59,7 @@ def main(queries, top):
     overview = {c[0]: c for c in chunks if c[2] == "OVERVIEW"}
     menus = defaultdict(list)
     for c in chunks:
-        if c[2] == "MENU":
+        if c[2] == "FOOD":  # 메뉴명 목록·메뉴 청크는 음식만 비교한다(음료 청크는 제외)
             menus[c[0]].append(c[3])
 
     # A: 통합 청크 (OVERVIEW + 메뉴명 목록)

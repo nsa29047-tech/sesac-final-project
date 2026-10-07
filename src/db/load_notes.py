@@ -43,14 +43,15 @@ def timestamp_to_sec(text):
 
 
 def menu_rows(note):
-    """추출 JSON -> menus 행 목록 [(item_type, name, cooking, taste, tips, price, evidence, first_appearance_sec)]"""
+    """추출 JSON -> menus 행 목록 [(item_type, name, cooking, taste, tips, price, evidence, first_appearance_sec, mentioned_sec)]
+    first_appearance(영상 분석)과 mentioned_at(자막 분석)은 키가 있는 쪽만 채워진다."""
     rows = []
     for m in note.get("menus", []):
         rows.append(("FOOD", m["name"], m.get("cooking_features"), m.get("taste_review"), m.get("tips"),
                      m.get("price"), m.get("evidence"),
-                     timestamp_to_sec(m.get("first_appearance"))))
+                     timestamp_to_sec(m.get("first_appearance")), timestamp_to_sec(m.get("mentioned_at"))))
     for d in note.get("drinks", []):
-        rows.append(("DRINK", d["name"], None, d.get("review"), None, None, None, None))
+        rows.append(("DRINK", d["name"], None, d.get("review"), None, None, None, None, None))
     return rows
 
 
@@ -80,8 +81,8 @@ def load_note(cur, note):
             continue
         seen.add((row[0], row[1]))
         cur.execute("""INSERT INTO menus (restaurant_id, video_id, item_type, name, cooking_features, taste_review,
-                       tips, price_text, evidence, first_appearance_sec)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       tips, price_text, evidence, first_appearance_sec, mentioned_sec)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (rid, vid, *row))
 
     cur.execute("""
