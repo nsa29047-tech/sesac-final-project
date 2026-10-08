@@ -15,7 +15,7 @@
    - `restaurant_hours_in_scope` (원본 `restaurant_hours`)
    - `michelin_status_in_scope` (원본 `michelin_status`)
 2. 챗봇 전용 계정 `chatbot_user`(`src/db/create_chatbot_role.sql`)로 접속한다. 이 계정은 원본 3개 테이블을 조회할 수 없고, 읽기 전용이다. `menus`, `restaurant_tags`, `video_restaurant_notes`, `restaurant_chunks`, `videos`를 조인할 때는 `restaurants_in_scope`와 `restaurant_id`로 조인한다.
-3. 접속 문자열은 환경변수 `POSTGRES_URI`, OpenAI 키는 `OPENAI_API_KEY`로 읽는다. `.env`를 열어 보거나 출력하지 않고, 키를 코드·로그·답변에 쓰지 않는다.
+3. 접속 문자열은 환경변수 `CHATBOT_POSTGRES_URI`(`chatbot_user`용. `POSTGRES_URI`는 관리자 계정이라 챗봇이 쓰지 않는다), OpenAI 키는 `OPENAI_API_KEY`로 읽는다. `.env`를 열어 보거나 출력하지 않고, 키를 코드·로그·답변에 쓰지 않는다.
 4. 쓰기·DDL은 하지 않는다. SELECT만 쓴다.
 5. SQL을 문자열로 만들 때 `LIKE '서울%'`처럼 `%`를 직접 쓰면 psycopg2 파라미터와 충돌한다. 값은 파라미터로 넘기거나 `starts_with(col, '서울')`를 쓴다.
 

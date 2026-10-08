@@ -163,6 +163,7 @@ uv run parse add --marketplace guide-michelin-com-api
 | `TAVILY_API_KEY` | 미슐랭 폴백 검색(`--michelin-fallback`)과 이력 근거 검색 |
 | `GEMINI_API_KEY` | Gemini API. 영상(시각·음성)을 직접 분석해 비정형 정보를 추출할 때 사용 |
 | `POSTGRES_URI` | PostgreSQL 접속 문자열 |
+| `CHATBOT_POSTGRES_URI` | 챗봇 전용 계정(`chatbot_user`, `create_chatbot_role.sql`) 접속 문자열. `rag_search.py`와 챗봇이 쓴다. 없으면 `POSTGRES_URI`로 접속하며 경고한다 |
 | `READONLY_POSTGRES_URI` | 읽기 전용 계정 접속 문자열. `src/db/test_readonly_role.py`에서 권한 확인용으로만 사용 |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT` | LangSmith 트레이싱 |
 

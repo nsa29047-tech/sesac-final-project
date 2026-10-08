@@ -41,7 +41,12 @@ class Judgement(BaseModel):
 
 
 def connect():
-    return psycopg2.connect(os.environ["POSTGRES_URI"])
+    """챗봇 전용 계정(CHATBOT_POSTGRES_URI)으로 접속한다. 없으면 POSTGRES_URI(관리자)로 접속하되 경고한다."""
+    uri = os.environ.get("CHATBOT_POSTGRES_URI")
+    if not uri:
+        print("[경고] CHATBOT_POSTGRES_URI 가 없어 POSTGRES_URI(관리자 계정)로 접속합니다. 챗봇은 전용 계정을 쓰세요.")
+        uri = os.environ["POSTGRES_URI"]
+    return psycopg2.connect(uri)
 
 
 def candidates(cur, client, query, where="TRUE", params=None, chunk_type=None, k=CANDIDATES):
