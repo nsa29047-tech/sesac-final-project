@@ -334,13 +334,14 @@ def clean_country_code(code: Optional[str]) -> str:
 
 
 def extract_stores_from_description(title: str, description: str) -> StoreExtractionResult:
-    if not description.strip():
+    if not description.strip() and not title.strip():
         return StoreExtractionResult(has_store_info=False, stores=[])
 
     prompt = f"""
 다음 유튜브 영상의 제목과 설명에서 소개된 음식점의 '한국어 상호명(korean_name)', '주소(address)', '2자리 국가코드(country_code: KR, JP, US, FR 등)'를 추출하세요.
 - 여러 가게가 있으면 각각 분리하여 목록으로 만드세요.
 - 가게 정보가 없으면 has_store_info를 false로 설정하세요.
+- 설명(소개란)에 상호명이 없으면 영상 제목에서 찾으세요(예: 제목의 '| 라미띠에').
 - 유튜브 채널명(예: 비밀이야)과 건물·단지 이름은 상호명이 아닙니다. 식당 이름을 찾을 수 없으면 그 가게는 목록에서 제외하세요.
 - country_code 는 반드시 대문자 알파벳 2글자만 쓰세요(예: KR). 다른 문자나 설명을 넣지 마세요.
 
