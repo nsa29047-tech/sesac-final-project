@@ -43,6 +43,7 @@ Python 3.14 + uv, LangGraph/LangChain, LangSmith, OpenAI(`gpt-4o-mini`), Google 
 완료(가격대, 10/8): Places Details `priceLevel`/`priceRange`를 51곳 샘플로 받아(`fetch_price_level.py`, 결과 `data/restaurant_prices_sample.csv`) 41곳(80%)에 값이 있는 것을 확인하고 `restaurants.price_level`(0~4)·`price_min`·`price_max`·`price_currency`에 적재했다(`migrate_price_columns.sql`, `load_prices.py`). 영상 분석의 메뉴 가격은 저장하지 않는다. 나머지 173곳은 호출하지 않았다(영상 분석 결과가 없는 식당).
 완료(CHEF 청크, 10/8): 셰프 이름·경력만 담은 짧은 `CHEF` 청크(식당당 1개, chunk_key=`chef`)를 추가하고 개요 청크에서는 셰프 문구를 뺐다(`migrate_chef_chunk.sql`, 청크 430개: OVERVIEW 51·FOOD 305·DRINK 62·CHEF 12). "흑백요리사에 나온 셰프의 식당" 질문에서 팔선이 8위→1위, 베수비오가 3위가 됐다. "우승한 셰프" 같은 짧은 질문은 아직 약하다(베수비오 4위). RAG 검색 테스트는 `src/db/test_rag.py`(10개 질문, 51곳).
 완료(검색 모듈, 10/8): `src/db/rag_search.py`가 SQL 필터 -> 벡터 후보 8개(거리 0.70 초과는 제외) -> gpt-4o-mini가 질문 충족 여부 판단 순서로 검색하고 충족하는 후보가 없으면 빈 목록을 돌려준다(챗봇은 "없다"고 답한다). 거리 임계값만으로는 맞는 결과와 없는 결과가 갈리지 않아서(짧은 질문 "딤섬" 0.74, 없는 "일본 오마카세 스시" 0.62) 판단을 LLM에 맡겼다. 지명이 음식 스타일인 말(홍콩)은 country_code가 아니라 카테고리·태그 키워드로 거른다(`STYLE_PLACES`, 우 완턴 킹은 US지만 홍콩식이라 포함, Wai Lung Seafood 같은 홍콩 해산물집은 카테고리에 홍콩·광동·딤섬·완탕이 없어 빠진다). 한계: 가격·분위기 같은 모호한 질문은 판단이 느슨하다. `test_rag.py`는 이 모듈로 12개 질문을 돌린다.
+완료(챗봇 조회 범위 뷰, 10/8): 영상 분석 노트가 있는 식당만 보이는 뷰 `restaurants_in_scope`(51곳)·`restaurant_hours_in_scope`·`michelin_status_in_scope`를 만들었다(`create_scope_views.sql`). 챗봇 에이전트의 SQL 도구는 원본 테이블 대신 이 뷰만 조회한다(노트가 없는 173곳이 SQL 전용 답변에 섞이지 않게). 노트를 더 적재하면 뷰가 자동으로 따라가고, 전체로 풀려면 뷰 정의의 EXISTS 조건을 뺀다.
 진행 예정: 전체 영상 추출·적재, LangGraph 챗봇 구현(`src/app.py`는 현재 빈 그래프), n8n 자동화.
 
 ## 알려진 이슈 (README의 TODO와 동일)
