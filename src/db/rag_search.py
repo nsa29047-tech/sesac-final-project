@@ -52,7 +52,7 @@ def candidates(cur, client, query, where="TRUE", params=None, chunk_type=None, k
         SELECT c.restaurant_id, COALESCE(r.name_ko, r.name_official), c.chunk_type, c.chunk_key, c.content,
                round((c.embedding <=> %s::vector)::numeric, 3)
         FROM restaurant_chunks c
-        JOIN restaurants r USING (restaurant_id)
+        JOIN restaurants_in_scope r USING (restaurant_id)
         JOIN video_restaurant_notes n ON n.restaurant_id = c.restaurant_id AND n.video_id = c.video_id
         WHERE ({where}) AND {style_sql} {"AND c.chunk_type = %s" if chunk_type else ""}
         ORDER BY c.embedding <=> %s::vector LIMIT {k}"""
