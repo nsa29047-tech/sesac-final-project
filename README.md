@@ -44,10 +44,10 @@ sesac-final-project/
 │   │   ├── extract_script_notes.py     # 5'. 자막 기반 추출 (시각 자막 입력, 메뉴별 mentioned_at 포함, gpt-4o-mini)
 │   │   ├── compare_prompt_v3.py        # 5'''. 자막 추출 프롬프트 실험(v2/v3/v4, 구간 분할, v5=구간 분할+LLM 중복 제거) -> data/compare/prompt_v3_*.md
 │   │   ├── extract_chef_info.py        # 5''. 자막에서 가게별 셰프(이름·역할·경력·근거) 추출, 확신도는 코드로 계산 -> data/chef_notes/
-│   │   ├── extract_script_split.py     # 5''''. A/B 분리 추출(A 가게 정보 / B 메뉴·음료·코스 단계 + 코스 판단·셰프 호출), 건별 저장 -> data/video_notes/gpt-4o-mini-script-split-v2/
+│   │   ├── extract_script_split.py     # 5''''. A/B 분리 추출(A 가게 정보 / B 메뉴·음료·코스 단계 + 코스 판단·셰프 호출), 건별 저장 -> data/video_notes/gpt-4o-mini-script-split-v2/ (2026년), -2025/ (2025년), -2024/ (2024년). 2024년 영상은 환경변수 TARGETS_FILE=data/urls/transcript_targets_20240101.txt 로 대상 목록을 바꿔 실행
 │   │   ├── reclassify_split_cuisine.py # 5-b. A/B 분리 결과의 음식 분류(대분류·소분류·태그)만 별도 호출로 다시 정함
 │   │   ├── postprocess_split.py        # 5-c. A/B 분리 결과 후처리(평가어·가격 문장, 코스 단계 보정, 음료 중복, 식당 이름 셰프 제거), 원본은 *_raw 폴더에 백업
-│   │   ├── get_transcripts_since.py    # 자막 수집 (yt-dlp, 2025-01-01 이후·적재 가능 영상만, 이어받기)
+│   │   ├── get_transcripts_since.py    # 자막 수집 (yt-dlp, 기본 2025-01-01 이후·적재 가능 영상만, --since 로 날짜 변경, 이어받기)
 │   │   ├── compare_extraction_methods.py # 추출 방식 비교 실험: video / 자막 / 하이브리드 (data/compare/report.md)
 │   │   ├── save_scripts.py             # (미사용) 자막 수집 - youtube-transcript-api
 │   │   └── extract_transcript_notes.py # (미사용) 자막 기반 추출. TranscriptNotes 스키마는 5번이 import
@@ -77,7 +77,7 @@ sesac-final-project/
 │       ├── create_scope_views.sql      # 챗봇 조회 범위 뷰: restaurants_in_scope 등 (영상 분석 노트가 있는 식당만)
 │       ├── create_chatbot_role.sql     # 챗봇 전용 DB 계정(뷰와 검색 테이블만 조회, 원본 테이블 조회 불가). 비밀번호를 채워 직접 실행
 │       ├── rag_search.py               # 검색 모듈: SQL 필터 -> 벡터 후보 -> LLM 충족 판단(맞는 결과 없으면 빈 목록)
-│       └── test_rag.py                 # 51곳 RAG 검색 테스트(12개 질문)
+│       └── test_rag.py                 # RAG 검색 테스트(12개 질문, 현재 범위 120곳)
 ├── parse_apis/                         # Parse SDK 스캐폴드. 생성 코드는 git 제외(`uv run parse add`로 재생성)
 ├── data/                               # 산출물 (git 제외)
 │   ├── urls/                           # 채널 영상 URL 목록 (원본 / 통과 / 제외)
@@ -133,14 +133,88 @@ sesac-final-project/
 | `restaurant_tags` | 음식 검색용 태그 (티본 스테이크, 스시 등) |
 | `video_restaurant_notes` | (영상, 식당)별 컨셉·분위기·총평·임베딩용 요약, 코스 식당 여부 `is_course`·코스 이름 `course_name`, 추출 원본 JSON |
 | `restaurant_chunks` | RAG 청크와 임베딩 (pgvector, `restaurant_chunks.sql`로 별도 생성). 종류: OVERVIEW(식당 개요) / FOOD / DRINK(메뉴별) / CHEF(셰프 이름·경력만 담은 짧은 청크) |
-| `restaurants_in_scope`, `restaurant_hours_in_scope`, `michelin_status_in_scope` | **뷰.** 영상 분석 노트가 있는 식당(현재 51곳)만 보이는 조회용. 챗봇은 원본 `restaurants`·`restaurant_hours`·`michelin_status` 대신 이 뷰만 조회한다(`create_scope_views.sql`) |
+| `restaurants_in_scope`, `restaurant_hours_in_scope`, `michelin_status_in_scope` | **뷰.** 영상 분석 노트가 있는 식당(현재 120곳)만 보이는 조회용. 챗봇은 원본 `restaurants`·`restaurant_hours`·`michelin_status` 대신 이 뷰만 조회한다(`create_scope_views.sql`) |
 
 설계 시 참고한 점:
 - `google_cid`는 부호 없는 64bit 정수라 BIGINT 범위를 넘을 수 있어 문자열로 저장합니다.
 - `google_open_now`는 조회 시점 값이므로 저장하지 않고, 영업 여부는 `restaurant_hours`와 현지 시간으로 계산합니다.
-- 결과 CSV는 22개 컬럼입니다. 미슐랭 연도별 이력(`history`)은 저장하지 않습니다. 음식 분류·소개글은 쓰지 않고 영상 분석 결과를 씁니다. 가격대는 Places `priceLevel`/`priceRange`를 `restaurants.price_level`(0 무료 ~ 4 매우 비쌈)·`price_min`·`price_max`·`price_currency`에 저장합니다(영상의 메뉴 가격은 저장하지 않음). 현재는 51곳만 호출했고(41곳에 값 있음), 통화가 섞여 있어 비교는 `price_level`로 합니다. `michelin_status`에는 `edition_type`·`is_active`를 두지 않고 `is_michelin`(현재 등재 여부)과 `latest_grade`만 저장합니다.
+- 결과 CSV는 22개 컬럼입니다. 미슐랭 연도별 이력(`history`)은 저장하지 않습니다. 음식 분류·소개글은 쓰지 않고 영상 분석 결과를 씁니다. 가격대는 Places `priceLevel`/`priceRange`를 `restaurants.price_level`(0 무료 ~ 4 매우 비쌈)·`price_min`·`price_max`·`price_currency`에 저장합니다(영상의 메뉴 가격은 저장하지 않음). 현재는 영상 분석 노트가 있는 120곳만 호출했고(약 100곳에 값 있음), 통화가 섞여 있어 비교는 `price_level`로 합니다. `michelin_status`에는 `edition_type`·`is_active`를 두지 않고 `is_michelin`(현재 등재 여부)과 `latest_grade`만 저장합니다.
 - **챗봇 조회 규칙**: 에이전트의 SQL 도구는 `restaurants`·`restaurant_hours`·`michelin_status` 원본을 직접 조회하지 않고 `*_in_scope` 뷰만 씁니다. 원본에는 영상 분석이 없는 식당(173곳)이 남아 있어 SQL 전용 답변에 섞이기 때문입니다. `create_chatbot_role.sql`로 만든 `chatbot_user`는 원본 테이블 권한이 없어 DB 권한으로도 막힙니다(이 계정을 쓸 때는 `restaurants_in_scope`와 조인). 이 계정은 아직 만들지 않았습니다.
 - RAG용 `restaurant_chunks`는 pgvector 확장이 필요해 `restaurant_chunks.sql`로 분리했습니다. 이미 이전 스키마를 적용한 DB는 `migrate_notes.sql`을 실행하세요.
+
+## 시작하기
+
+### 1. 환경 설정
+
+```bash
+uv sync   # 의존성은 pyproject.toml에 모두 정의되어 있음
+# parse_apis/ 의 생성 코드는 git 제외이므로 새로 받았다면 다시 만든다 (Parse 계정 로그인 필요)
+uv run parse init
+uv run parse add --marketplace guide-michelin-com-api
+```
+
+### 2. 환경변수 (`.env`)
+
+| 변수 | 용도 |
+|---|---|
+| `OPENAI_API_KEY` | 식당 정보 추출·분류·미슐랭 판별 |
+| `GOOGLE_PLACES_API_KEY` | Places API (New). 없으면 구글 조회를 건너뜀 |
+| `MICHELIN_GUIDE_API_KEY` | Parse의 guide.michelin.com API 키. 미슐랭 현재 등급 판별에 사용(코드에서 `PARSE_API_KEY`로 옮겨 줌). 없으면 미슐랭 조회가 실패로 기록됨 |
+| `TAVILY_API_KEY` | 미슐랭 폴백 검색(`--michelin-fallback`)과 이력 근거 검색 |
+| `GEMINI_API_KEY` | Gemini API. 영상(시각·음성)을 직접 분석해 비정형 정보를 추출할 때 사용 |
+| `POSTGRES_URI` | PostgreSQL 접속 문자열 |
+| `CHATBOT_POSTGRES_URI` | 챗봇 전용 계정(`chatbot_user`, `create_chatbot_role.sql`) 접속 문자열. `rag_search.py`와 챗봇이 쓴다. 없으면 `POSTGRES_URI`로 접속하며 경고한다 |
+| `READONLY_POSTGRES_URI` | 읽기 전용 계정 접속 문자열. `src/db/test_readonly_role.py`에서 권한 확인용으로만 사용 |
+| `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT` | LangSmith 트레이싱 |
+
+### 3. 파이프라인 실행
+
+```bash
+uv run python src/pipeline/collect_video_urls.py                          # 1. 영상 URL 수집 (--since, --channel)
+uv run python src/pipeline/channel_video_filter.py                        # 2. 필터링
+uv run python src/pipeline/extract_restaurant_info.py --skip-michelin   # Parse 하루 100회 제한 때문에 미슐랭은 건너뜀
+uv run python src/pipeline/fill_michelin.py                               # 하루 한도(기본 90회)만큼씩 미슐랭 채움, 남으면 다음 날 다시 실행
+uv run python src/pipeline/export_review_list.py                          # (선택) 사람이 확인할 식당 목록 xlsx
+uv run python src/pipeline/enrich_regions.py --limit 10 --output data/restaurant_regions_sample.csv   # 샘플 검증 후 전체
+```
+
+### 4. DB 구축
+
+```bash
+createdb restaurants
+psql -d restaurants -f src/db/restaurant_schema.sql          # 스키마는 한 번만 실행
+uv run python src/db/load_restaurants.py data/restaurants_info.xlsx   # DSN을 생략하면 POSTGRES_URI(.env) 사용
+uv run python src/db/load_regions.py                         # restaurants.region_1/2/3 적재 (먼저 --dry-run 권장)
+psql -d restaurants -f src/db/restaurant_chunks.sql          # pgvector 필요 (이전 스키마 DB는 아래 마이그레이션 먼저)
+uv run python src/pipeline/extract_video_notes.py --stores-csv data/restaurants_info.csv --limit 5   # 처리 안 된 영상 N개씩 이어서
+uv run python src/db/load_notes.py
+uv run python src/db/embed_chunks.py
+```
+
+A/B 분리 추출 결과를 DB에 반영하는 순서입니다. 결과 폴더(태그)는 `gpt-4o-mini-script-split-v2`(2026년), `-2025`, `-2024` 세 개이고, 처음 한 번만 아래 준비(백업·비우기·마이그레이션)를 하고 태그마다 반복합니다(10/8 적용).
+
+```bash
+# [처음 한 번] 이미 비정형 테이블이 있는 DB를 새 스키마로 전환
+uv run python src/db/backup_tables.py --tables restaurants menus restaurant_tags video_restaurant_notes restaurant_chunks   # 백업
+# 비정형 4개 테이블 비우기: reset_notes_tables.sql 과 같은 내용 (restaurants.category_*, chef_* 도 초기화)
+# migrate_split_schema.sql -> migrate_price_columns.sql -> migrate_chef_chunk.sql -> create_scope_views.sql 적용
+
+# [태그마다 반복] TAG=gpt-4o-mini-script-split-v2 (또는 -2025, -2024)
+uv run python src/db/load_notes.py --model $TAG
+uv run python src/db/load_chefs.py --notes-tag $TAG
+uv run python src/pipeline/fill_michelin.py --only-notes $TAG        # Parse 호출(하루 100회 한도, 결과는 CSV에 저장)
+uv run python src/db/load_restaurants.py data/restaurants_info.xlsx   # 미슐랭 결과를 DB에 반영
+uv run python src/pipeline/fetch_price_level.py --notes-tag $TAG      # 가게 수만큼 Places Details 호출 (Enterprise SKU 필드, 호출당 약 $0.02)
+uv run python src/db/load_prices.py
+uv run python src/db/embed_chunks.py
+uv run python src/db/test_rag.py                                      # 검색 확인
+```
+
+- 2024년 결과는 대상 목록이 달라 추출 때 `TARGETS_FILE=data/urls/transcript_targets_20240101.txt`가 필요합니다(적재 명령에는 필요 없음).
+- 추출 후 `reclassify_split_cuisine.py --tag $TAG`, `postprocess_split.py --tag $TAG`를 먼저 실행합니다. 영상 ID가 `-`로 시작하면 `--video-id=ID` 형태로 넘깁니다.
+- `load_notes.py`·`load_chefs.py`·`embed_chunks.py`는 여러 번 실행해도 중복되지 않습니다. `fill_michelin.py`는 미조회 식당만 호출합니다.
+
+이미 이전 스키마를 적용한 DB는 `migrate_notes.sql`을 실행하세요.
 
 ## 시작하기
 
@@ -226,10 +300,11 @@ uv run langgraph dev
 - [x] 셰프 정보(자막 방식): 96곳을 `extract_chef_info.py`로 추출하고 `load_chefs.py`로 `restaurants.chef_name`(여러 명은 쉼표로 연결)·`chef_info`에 27곳 적재했습니다(159개 식당 중 17%). 모델 판단을 그대로 믿으면 약 30%가 틀려서("사장님", 채널 운영자, 식당 이름, 같은 영상의 다른 가게 셰프 등) 적재 단계에서 규칙으로 거르고, 확신도 low(자동 자막에서 한 번만 나온 이름 등)는 넣지 않습니다. 규칙으로 걸러지지 않은 3건은 사람이 확인해 `MANUAL_EXCLUDE`에 사유와 함께 남겼습니다. `chef_info`의 경력·수상은 유튜버가 영상에서 한 말이라 검증된 사실이 아니고, 정답 기준으로 적재 결과 전체를 검증하지는 않았습니다. 셰프 이름·경력은 OVERVIEW 청크에도 넣었습니다(28개 재임베딩). 다만 개요 청크가 길어 경력 질문의 검색 순위가 낮아서("흑백요리사 출연 셰프" 질문에서 팔선 12위, 베수비오 20위) 짧은 CHEF 청크나 키워드 검색 보완이 필요합니다. 셰프 이름이 식당 이름에 들어 있는 경우(예: 알랭 뒤카스)와 한 영상의 여러 가게에 걸친 셰프(예: 우동카덴의 정호영)는 규칙상 빠집니다
 - [x] 자막 추출 품질 개선 실험(A/B 분리 추출로 대체되어 DB에는 적용하지 않음): 현재 적재된 v2는 맛 표현의 40%가 자막 문장 그대로이고 팁을 지어내며, 자동 생성 자막 영상은 메뉴가 평균 3.5개(제작자 자막은 6.1개)로 누락이 많습니다. `compare_prompt_v3.py`로 3개 영상(르 퀸시, 레 프레 드 외제니, 비움)에서 비교한 결과 v4 프롬프트가 구어체를 정리하고 지어낸 팁을 없앴으며, 구간 분할(6분 단위)이 누락을 크게 줄이지만 중복을 만들어 v5(LLM 중복 제거+범주 이름·같은 시각 규칙)로 막았습니다. 제작자 자막으로 이미 잘 나오는 영상(비움)에서는 구간 분할이 반찬 같은 설명 없는 항목만 늘려서 자동 생성 자막 영상에만 적용하는 방안을 검토 중입니다. 3개 영상만 확인했고 전체 적용 전 추가 검증이 필요합니다. 2단계 추출(`extract_script_two_stage.py`)도 시험했으나 시각·누락 보완은 좋아지는 반면 요리별 설명이 많이 비고 같이 나온 요리의 평가가 섞여서, 자막만으로는 한계가 있어 하이브리드(영상+자막) 재검토가 필요합니다
 - [x] A/B 분리 추출(10/7 개발, 10/8 DB 적용: 51곳, 메뉴 462, 청크 430): 한 번에 많은 필드를 뽑는 부담을 줄이려고 가게 정보(A: 컨셉·분류·분위기·키포인트)와 메뉴·음료(B)를 두 호출로 나눴습니다(`extract_script_split.py`). 코스 판단(`detect_course`)을 먼저 하고 B에 알려 코스면 요리마다 `course_stage`(아뮤즈부쉬, 식전빵, 전채, 수프, 생선, 메인, 치즈, 프리디저트, 디저트, 프티푸르)를 적으며, 셰프는 `chefs_for_store`를 별도 호출로 써서 대표 셰프(오너·총괄)만 남깁니다. 모든 호출은 가게별 자막 구간(`video_parts`)만 입력으로 받아 가게가 여러 곳인 영상에서 요리가 섞이는 문제를 막았습니다. 메뉴 설명 칸은 `cooking_features` 하나로 합쳤고(`taste_review`·`tips`·`price` 제거) 재료·조리법·맛 묘사·구체적인 평가를 요약해서 담습니다. 2026년 수동 자막 영상 34개(49곳, ID는 `data/urls/split_targets_2026_manual.txt`)를 실행했습니다(약 $0.15). 기존 v2와 비교(49곳)하면 메뉴가 5.5→7.4개, 설명 길이 23→48자, 키포인트 2.5→3.2개로 늘었고 비용은 가게당 $0.0019→$0.0031, 시간은 8.4→16.4초입니다. 이후 음식 분류만 별도 호출로 다시 정했고(`reclassify_split_cuisine.py`, 한국 식당과 스페인 타파스 바가 중식으로 잘못 분류된 12곳 등 15곳이 바뀜, 이전 값은 `cuisine_before`) 후처리했습니다(`postprocess_split.py`: 평가어·가격 문장 정리, 코스 단계 보정, 음료가 메뉴로 들어간 1건과 식당 이름이 셰프로 들어간 2건 제거). 평가어는 근거 없이 평가만 있는 문장만 제거하는 기준이고, 남은 "식감이 좋다"·"맛있는 버터" 같은 표현(18개)은 확인 후 그대로 쓰기로 했다. 남은 문제: 코스 단계가 `메인`에 몰리고 일부 오분류라 필터가 아닌 참고용으로만 쓸 것, 설명이 없는 메뉴 66개(18%)는 실제로 먹었는지 미확인, 정답 기준이 없어 환각·누락은 판단하지 못했고 자동 자막 영상(55개)에는 적용해 보지 않았습니다. 기존 자막 방식 결과(165곳)는 DB에서 삭제하고 이 결과 51곳만 적재했습니다(백업 `data/backup_20261008_100934/`)
-- [x] 가격대(Places priceLevel/priceRange): 51곳 샘플로 41곳(80%)에 값이 있는 것을 확인하고 `restaurants`에 적재. 나머지 173곳은 호출하지 않음
+- [x] 가격대(Places priceLevel/priceRange): 51곳 샘플로 41곳(80%)에 값이 있는 것을 확인하고 `restaurants`에 적재. 노트가 없는 식당은 호출하지 않음
+- [x] 수동 자막 영상 확대(10/8): 200개 영상 중 제작자 수동 한국어 자막은 126개(2024년 51·2025년 38·2026년 37), 자동 생성 72개, 자막 없음 2개입니다. 2025년 수동 자막 32개 영상 34곳(중국 본토 6개 영상 제외, ID `data/urls/manual_2025_ids.txt`)과 2024년 40개 영상 41곳(`data/urls/manual_2024_ready_ids.txt`, 가게 정보 없음 7·중국 4 제외)을 같은 A/B 분리 추출로 처리해 적재했습니다(결과 `gpt-4o-mini-script-split-v2-2025`·`-2024`, 각 약 $0.12). 미슐랭은 Parse 결과를 근거로 하고(영상 언급 아님) 철자 차이로 매칭이 실패한 아켈라레는 수동 반영했습니다. 식당 이름이 채널명("비밀이야")이나 일반 명칭으로 들어간 3건은 영상 제목 기준으로 고쳤고(라미띠에·뜨락·마틴 베라사테기), 소개란에 상호가 없으면 제목에서 찾도록 프롬프트에 규칙을 넣었습니다. Places가 건물로 잘못 매칭한 미츠이 2호관은 ACA(la cocina de acá)로 다시 매칭했습니다. 사용자가 제외한 4곳(파라다이스 X Les Amis, 순환수산, 광해호수산, 미가키쇼 나가야마)은 DB와 CSV에서 지웠습니다. 조회 범위는 51 → 120곳입니다. 아직 하지 않은 것: 자동 생성 자막 72개 영상, 소개란에 가게 정보가 없는 영상(꼼모아 강남 `nyKPQqu6674` 등), 환각·누락 검증
 - [x] CHEF 청크: 셰프 경력 질문 순위 개선("흑백요리사에 나온 셰프" 질문에서 팔선 8위 -> 1위)
 - [x] 검색 모듈 `rag_search.py`: LLM이 질문 충족 여부를 판단해 맞는 결과가 없으면 "없음", 홍콩처럼 음식 스타일로 쓰이는 지명은 country_code가 아니라 카테고리·태그로 판단
-- [x] 챗봇 조회 범위 뷰 `*_in_scope`(51곳)와 챗봇 전용 계정 스크립트 `create_chatbot_role.sql` (계정은 아직 만들지 않음)
+- [x] 챗봇 조회 범위 뷰 `*_in_scope`(현재 120곳)와 챗봇 전용 계정 스크립트 `create_chatbot_role.sql` (계정은 아직 만들지 않음)
 - [ ] LangGraph 챗봇 구현 (현재 `app.py`는 빈 그래프)
 - [ ] n8n 자동화
 
