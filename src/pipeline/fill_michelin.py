@@ -12,7 +12,8 @@ restaurants_info.csv 에서 미슐랭을 아직 확인하지 못한 식당만 �
 - 식당 1곳을 처리할 때마다 CSV에 즉시 저장한다. 하루 한도 오류가 나면 그 자리에서 멈추고 남은 건수를 알려 준다.
 - 판별 방식은 extract_restaurant_info.check_michelin_status (Parse API, 이름·도시 일치) 와 같다.
 
-사용: uv run python src/pipeline/fill_michelin.py [--csv data/restaurants_info.csv] [--max-calls 90]
+사용: uv run python src/pipeline/fill_michelin.py [--csv data/restaurants_info.csv] [--max-calls 90] [--only-notes 태그]
+  --only-notes: data/video_notes/<태그>/ 의 JSON 에 있는 식당(google_cid)만 처리한다(챗봇에 먼저 필요한 식당만 우선 채울 때).
 환경변수(.env): MICHELIN_GUIDE_API_KEY
 """
 
@@ -54,7 +55,7 @@ def save_csv(path: Path, fieldnames: List[str], rows: List[Dict[str, str]]) -> N
     os.replace(tmp, path)
 
 
-def main(csv_path: Path, max_calls: int) -> None:
+def main(csv_path: Path, max_calls: int, only_notes: str = "") -> None:
     with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames
@@ -78,6 +79,13 @@ def main(csv_path: Path, max_calls: int) -> None:
     if copied:
         save_csv(csv_path, fieldnames, rows)
         print(f"다른 영상에서 이미 확정된 식당 {copied}행은 API 호출 없이 복사했습니다")
+
+    if only_notes:
+        import json
+        files = (ROOT / "data" / "video_notes" / only_notes).glob("*.json")
+        wanted = {str(json.loads(f.read_text(encoding="utf-8")).get("google_cid") or "").strip() for f in files}
+        by_cid = {c: g for c, g in by_cid.items() if c in wanted}
+        print(f"--only-notes {only_notes}: 해당 결과의 식당 {len(wanted)}곳으로 대상을 좁혔습니다")
 
     print(f"미슐랭 확인이 필요한 식당 {len(by_cid)}곳 (행 {sum(len(v) for v in by_cid.values())}개). 이번 실행 최대 {max_calls}회 호출")
     base.MICHELIN_MAX_CALLS = max_calls
@@ -124,5 +132,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="미슐랭을 아직 확인하지 못한 식당만 Parse API로 채운다.")
     ap.add_argument("--csv", type=Path, default=DEFAULT_CSV)
     ap.add_argument("--max-calls", type=int, default=DEFAULT_MAX_CALLS, help="이번 실행에서 Parse API를 호출할 최대 횟수")
+    ap.add_argument("--only-notes", default="", help="data/video_notes/<태그>/ 에 결과가 있는 식당만 처리")
     args = ap.parse_args()
-    main(args.csv, args.max_calls)
+    main(args.csv, args.max_calls, args.only_notes)
