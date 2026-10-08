@@ -20,6 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CHEF_DIR = ROOT / "data" / "chef_notes"
+NOTES_DIR = ROOT / "data" / "video_notes"   # --notes-tag: A/B 분리 추출 결과(chefs 가 이미 들어 있음)
 RANK = {"high": 3, "medium": 2, "low": 1}
 ROLE_ORDER = {"owner_chef": 0, "head_chef": 1, "chef": 2, "pastry_chef": 3, "other": 4}
 
@@ -30,7 +31,6 @@ def norm(name: str) -> str:
 
 # 규칙으로 걸러지지 않아 사람이 결과를 보고 직접 제외한 항목: (식당 korean_name, 셰프 이름) -> 사유
 MANUAL_EXCLUDE = {
-    ("프릳츠 장충점", "강민구"): "밍글스의 셰프가 방문한 영상. 이 식당의 셰프가 아님",
     ("칼 펩", "Cal Pep"): "식당 이름(Cal Pep)을 영문으로 적은 것. 사람 이름이 아님",
     ("멘야 사이미", "샤이미"): "식당 이름이 자동 자막에서 깨진 것으로 보임. 사람 이름이 아님",
 }
@@ -79,9 +79,16 @@ def merge_restaurant(entries, min_rank):
     return name, info
 
 
-def main(dir_name, min_confidence, dry_run):
+# 같은 이름이 여러 식당에 붙어도 사람이 확인해 맞다고 한 항목: (식당 korean_name, 셰프 이름)
+MANUAL_KEEP = {
+    ("프릳츠 장충점", "강민구"): "10/8 확인: 프릳츠 장충점과 밍글스 모두 강민구 셰프",
+    ("밍글스", "강민구"): "10/8 확인",
+}
+
+
+def main(dir_name, min_confidence, dry_run, notes_tag=None):
     by_cid = defaultdict(list)
-    files = sorted((CHEF_DIR / dir_name).glob("*.json"))
+    files = sorted(((NOTES_DIR / notes_tag) if notes_tag else (CHEF_DIR / dir_name)).glob("*.json"))
     notes = [json.loads(f.read_text(encoding="utf-8")) for f in files]
     stores_of = defaultdict(lambda: defaultdict(set))  # 영상 -> 이름 -> 그 이름이 붙은 가게(cid)들
     for note in notes:
@@ -109,7 +116,7 @@ def main(dir_name, min_confidence, dry_run):
     for note, chef in passed:
         key = norm(chef["name"])
         text = norm(chef["evidence"] + (chef.get("background") or ""))
-        if len(restaurants_of[key]) > 1 and norm(note["korean_name"]) not in text:
+        if len(restaurants_of[key]) > 1 and norm(note["korean_name"]) not in text and (note["korean_name"], chef["name"]) not in MANUAL_KEEP:
             dropped["같은 이름이 여러 식당에 붙고 근거에 식당 이름이 없음"].append(f"{note['korean_name']}: {chef['name']}")
         else:
             by_cid[note["google_cid"]].append(chef)
@@ -155,5 +162,6 @@ if __name__ == "__main__":
     ap.add_argument("--dir", default="gpt-4o-mini-chef-v1", help="data/chef_notes 아래 결과 폴더")
     ap.add_argument("--min-confidence", choices=["high", "medium", "low"], default="medium", help="이 확신도 이상만 적재 (기본 medium)")
     ap.add_argument("--dry-run", action="store_true", help="DB 접속 없이 적재 대상만 출력")
+    ap.add_argument("--notes-tag", default=None, help="data/video_notes 아래 A/B 분리 추출 결과 폴더(chefs 포함). 지정하면 --dir 대신 쓴다")
     args = ap.parse_args()
-    main(args.dir, args.min_confidence, args.dry_run)
+    main(args.dir, args.min_confidence, args.dry_run, args.notes_tag)

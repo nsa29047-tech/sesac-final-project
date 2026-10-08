@@ -43,15 +43,15 @@ def timestamp_to_sec(text):
 
 
 def menu_rows(note):
-    """추출 JSON -> menus 행 목록 [(item_type, name, cooking, taste, tips, price, evidence, first_appearance_sec, mentioned_sec)]
+    """추출 JSON -> menus 행 목록 [(item_type, name, description, evidence, first_appearance_sec, mentioned_sec, menu_order, course_stage)]
     first_appearance(영상 분석)과 mentioned_at(자막 분석)은 키가 있는 쪽만 채워진다."""
     rows = []
     for m in note.get("menus", []):
-        rows.append(("FOOD", m["name"], m.get("cooking_features"), m.get("taste_review"), m.get("tips"),
-                     m.get("price"), m.get("evidence"),
-                     timestamp_to_sec(m.get("first_appearance")), timestamp_to_sec(m.get("mentioned_at"))))
+        rows.append(("FOOD", m["name"], m.get("cooking_features"), m.get("evidence"),
+                     timestamp_to_sec(m.get("first_appearance")), timestamp_to_sec(m.get("mentioned_at")),
+                     m.get("order"), m.get("course_stage")))
     for d in note.get("drinks", []):
-        rows.append(("DRINK", d["name"], None, d.get("review"), None, None, None, None, None))
+        rows.append(("DRINK", d["name"], d.get("review"), None, None, None, None, None))
     return rows
 
 
@@ -80,21 +80,23 @@ def load_note(cur, note):
         if (row[0], row[1]) in seen:  # 같은 이름이 두 번 나오면 유니크 제약에 걸리므로 첫 번째만
             continue
         seen.add((row[0], row[1]))
-        cur.execute("""INSERT INTO menus (restaurant_id, video_id, item_type, name, cooking_features, taste_review,
-                       tips, price_text, evidence, first_appearance_sec, mentioned_sec)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        cur.execute("""INSERT INTO menus (restaurant_id, video_id, item_type, name, description, evidence,
+                       first_appearance_sec, mentioned_sec, menu_order, course_stage)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (rid, vid, *row))
 
     cur.execute("""
         INSERT INTO video_restaurant_notes (video_id, restaurant_id, concept, atmosphere, key_points, final_review,
-                                            embedding_text, model, raw)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                            embedding_text, model, raw, is_course, course_name)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (video_id, restaurant_id) DO UPDATE SET
             concept = EXCLUDED.concept, atmosphere = EXCLUDED.atmosphere, key_points = EXCLUDED.key_points,
             final_review = EXCLUDED.final_review, embedding_text = EXCLUDED.embedding_text,
-            model = EXCLUDED.model, raw = EXCLUDED.raw, extracted_at = now()""",
+            model = EXCLUDED.model, raw = EXCLUDED.raw, is_course = EXCLUDED.is_course,
+            course_name = EXCLUDED.course_name, extracted_at = now()""",
                 (vid, rid, note.get("concept"), note.get("atmosphere"), Json(note.get("key_points", [])),
-                 note.get("final_review"), note.get("embedding_text"), note.get("model"), Json(note)))
+                 note.get("final_review"), note.get("embedding_text"), note.get("model"), Json(note),
+                 bool(note.get("course")), (note.get("course") or {}).get("name")))
     return f"{note['korean_name']}: 메뉴/음료 {len(seen)}개, 태그 {len(note.get('cuisine_tags', []))}개"
 
 
