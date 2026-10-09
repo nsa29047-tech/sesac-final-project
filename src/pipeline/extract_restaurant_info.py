@@ -42,6 +42,8 @@ from typing import List, Optional, Dict, Any, Tuple
 
 import requests
 import yt_dlp
+from video_meta_cache import get_video_meta
+from fetch_price_level import FIELDNAMES as PRICE_FIELDS, OUTPUT_FILE as PRICES_FILE, price_fields
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from openai import OpenAI
@@ -315,10 +317,8 @@ def drop_redundant_lodging(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str, A
 # 2. [Step 1] yt-dlp: 유튜브 설명 가져오기
 # -------------------------------------------------------------
 def get_youtube_description(url: str) -> dict:
-    ydl_opts = {'skip_download': True, 'quiet': True, 'no_warnings': True}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        return {'title': info.get('title', ''), 'description': info.get('description') or ''}
+    # 2단계(channel_video_filter.py)가 저장한 캐시가 있으면 yt-dlp를 호출하지 않는다
+    return get_video_meta(url)
 
 
 # -------------------------------------------------------------
@@ -474,7 +474,11 @@ def places_text_search(query: str, country_code: str) -> List[Dict[str, Any]]:
             "places.googleMapsUri,places.primaryType,places.primaryTypeDisplayName,places.types,"  # 유형: 후보 선택(choose_place)과 숙소 판별용
             "places.businessStatus,"
             "places.nationalPhoneNumber,places.internationalPhoneNumber,places.websiteUri,"
-            "places.regularOpeningHours"
+            "places.regularOpeningHours,"
+            # 가격대용. Text Search 가 이미 Enterprise 등급이라 추가 비용 없이 같이 받는다.
+            # 지역(addressComponents)은 여기서 받지 않는다: 이 검색은 languageCode 가 없어 영문 지명이 오는데
+            # (공식명 비교 때문에 바꿀 수 없음) 지역은 한국어(languageCode=ko)가 필요해 enrich_regions.py 가 Details 로 받는다.
+            "places.priceLevel,places.priceRange"
             # 아래는 Enterprise+Atmosphere 등급이라 비용이 더 나가는 필드들. 필요하면 주석 해제.
             # ",places.servesVegetarianFood,places.takeout,places.delivery,places.dineIn,"
             # "places.reservable,places.outdoorSeating,places.goodForChildren,places.allowsDogs,"
@@ -545,6 +549,7 @@ def place_to_info(place: Dict[str, Any]) -> Dict[str, Any]:
         # weekdayDescriptions: ["Monday: 11:00 AM – 9:00 PM", ...] 형태의 사람이 읽기 좋은 문자열 리스트
         "opening_hours": " | ".join(regular_hours.get("weekdayDescriptions", [])),
         "is_lodging": is_lodging_place(place),
+        "price_data": {"priceLevel": place.get("priceLevel"), "priceRange": place.get("priceRange")},
     }
 
 
@@ -861,6 +866,8 @@ def fill_google_fields(row: Dict[str, Any], g_info: Dict[str, Any]) -> None:
     row["google_phone"] = g_info.get("phone", "")
     row["google_website"] = g_info.get("website", "")
     row["google_opening_hours"] = g_info.get("opening_hours", "")
+    # 가격은 FIELDNAMES(22컬럼)에 없고 main 이 별도 CSV(restaurant_prices_sample.csv)에 기록한다
+    row["_price_data"] = g_info.get("price_data") or {}
     if g_info.get("is_lodging"):
         row["note"] += LODGING_NOTE + " 확인 필요: 식당이 아닌 호텔 등으로 매칭됐을 수 있음; "
 
@@ -876,7 +883,8 @@ def process_video(url: str, v_idx: int, total: int) -> Optional[List[Dict[str, A
         print(f"{tag} ⚠️ 영상 정보 조회 실패(기록하지 않음, 재실행 시 재시도): {e}")
         return None
 
-    time.sleep(random.uniform(*YTDLP_DELAY))
+    if not video_data.get('cached'):
+        time.sleep(random.uniform(*YTDLP_DELAY))
     print(f"{tag} 제목: {video_data['title']}")
 
     try:
@@ -963,6 +971,47 @@ def process_video(url: str, v_idx: int, total: int) -> Optional[List[Dict[str, A
     return rows
 
 
+class PriceWriter:
+    """Text Search 로 함께 받은 가격대를 restaurant_prices_sample.csv 에 건별로 덧붙인다.
+
+    fetch_price_level.py 와 같은 컬럼이라 load_prices.py 를 그대로 쓴다. 이미 기록된 google_place_id 는 다시 쓰지 않는다.
+    --output 이 기본 경로가 아니면 같은 위치에 `<이름>_prices.csv` 로 쓴다(테스트 실행이 실제 파일을 건드리지 않게).
+    """
+
+    def __init__(self, output_file: str):
+        if os.path.abspath(output_file) == os.path.abspath(OUTPUT_FILE):
+            path = PRICES_FILE
+        else:
+            path = Path(os.path.splitext(output_file)[0] + "_prices.csv")
+        path = Path(path)
+        exists = path.exists() and path.stat().st_size > 0
+        self._done = set()
+        if exists:
+            with open(path, "r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f)
+                if reader.fieldnames != PRICE_FIELDS:
+                    raise SystemExit(f"오류: {path} 의 컬럼이 현재 스키마와 다릅니다. 파일을 옮기고 다시 실행해 주세요.")
+                self._done = {r["google_place_id"] for r in reader}
+        self._file = open(path, "a" if exists else "w", encoding="utf-8-sig", newline="")
+        self._writer = csv.DictWriter(self._file, fieldnames=PRICE_FIELDS)
+        if not exists:
+            self._writer.writeheader()
+
+    def write(self, rows: List[Dict[str, Any]]) -> None:
+        for row in rows:
+            pid = row.get("google_place_id")
+            if not pid or "_price_data" not in row or pid in self._done:
+                continue
+            self._writer.writerow({
+                "google_cid": row["google_cid"], "google_place_id": pid, "korean_name": row["korean_name"],
+                "country_code": row["country_code"], **price_fields(row["_price_data"]), "status": "ok"})
+            self._done.add(pid)
+        self._file.flush()
+
+    def close(self) -> None:
+        self._file.close()
+
+
 def main(output_file: str = OUTPUT_FILE, limit: Optional[int] = None, workers: int = 3,
          video_ids: Optional[List[str]] = None):
     if video_ids:
@@ -1004,9 +1053,10 @@ def main(output_file: str = OUTPUT_FILE, limit: Optional[int] = None, workers: i
     failed = 0
     started = time.time()
     with open(output_file, "a" if resume else "w", encoding="utf-8-sig", newline="") as out_f:
-        writer = csv.DictWriter(out_f, fieldnames=FIELDNAMES)
+        writer = csv.DictWriter(out_f, fieldnames=FIELDNAMES, extrasaction="ignore")
         if not resume:
             writer.writeheader()
+        side = PriceWriter(output_file)
 
         # 영상 단위로 병렬 처리한다. CSV 쓰기는 이 메인 스레드에서만 하므로 파일이 섞이지 않는다.
         with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -1021,9 +1071,11 @@ def main(output_file: str = OUTPUT_FILE, limit: Optional[int] = None, workers: i
                     failed += 1
                     continue
                 writer.writerows(rows)
+                side.write(rows)
                 out_f.flush()  # 중간에 중단돼도 여기까지는 파일에 남도록
                 print(f"--- 진행 {done_count}/{len(todo)} 완료, 경과 {int(time.time() - started)}초")
 
+    side.close()
     if failed:
         print(f"재시도 필요한 영상 {failed}개 (일시적 오류): 같은 명령을 다시 실행하면 이어서 처리합니다.")
     print(f"처리 완료! 결과 -> '{output_file}'")

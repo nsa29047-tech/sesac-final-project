@@ -4,6 +4,7 @@ import time
 import yt_dlp
 
 from pathlib import Path
+from video_meta_cache import get_video_meta
 
 # 프로젝트 루트(sesac-final-project/) 기준으로 경로를 잡는다. 실행 위치(cwd)와 무관하게 동작.
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,11 +41,13 @@ else:
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         for idx, url in enumerate(urls, start=1):
+            cached = False
             try:
-                info = ydl.extract_info(url, download=False)
-                title = info.get('title', '제목 없음')
-                # description 키가 None으로 오는 경우까지 방지 (get 기본값은 키가 아예 없을 때만 적용됨)
-                description = info.get('description') or ''
+                # 가져온 소개란은 data/descriptions/에 캐시해 3단계(extract_restaurant_info.py)가 재사용한다
+                meta = get_video_meta(url, ydl)
+                cached = meta['cached']
+                title = meta['title'] or '제목 없음'
+                description = meta['description']
 
                 # 2. 필터링 조건: 소개란에 '가게' 또는 '장소' 언급이 있는 영상만 통과
                 # 중국 소재 여부는 이후 Google Places API에서 받아오는 주소(address_components의
@@ -62,7 +65,7 @@ else:
                 excluded_urls.append(url)
 
             # 마지막 URL 처리 후에는 대기할 필요 없음
-            if idx < len(urls):
+            if idx < len(urls) and not cached:
                 time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 
     # 3-1. 통과된 URL 목록 저장

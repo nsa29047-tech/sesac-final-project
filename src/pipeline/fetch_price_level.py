@@ -2,6 +2,7 @@
 
 - 대상: --notes-tag 가 있으면 data/video_notes/<태그>/ 결과에 있는 식당, 없으면 restaurants_info.csv 전체(google_place_id 가 있는 식당).
 - 식당(google_cid)마다 1회 호출하고, 이미 저장된 식당은 건너뛰므로 중단 후 재실행하면 이어서 처리한다.
+- 새 식당은 extract_restaurant_info.py 가 Text Search 때 가격을 함께 받아 같은 CSV에 기록하므로, 이 스크립트는 그 전에 매칭된 식당을 채우는 용도다.
 - priceLevel / priceRange 는 Enterprise SKU 필드라 호출당 비용이 일반 Details 보다 높다. 대량 실행 전에 샘플로 채워지는 비율을 확인한다.
 
 사용: uv run python src/pipeline/fetch_price_level.py --notes-tag gpt-4o-mini-script-split-v2 [--limit 51]
@@ -39,6 +40,15 @@ def money(m):
     return (m or {}).get("units", "0") if m else None
 
 
+def price_fields(data):
+    """Places 응답(priceLevel/priceRange)을 가격 CSV 컬럼 값으로 바꾼다. extract_restaurant_info.py 도 같이 쓴다."""
+    data = data or {}
+    pr = data.get("priceRange") or {}
+    return {"price_level": data.get("priceLevel") or "",
+            "price_min": money(pr.get("startPrice")) or "", "price_max": money(pr.get("endPrice")) or "",
+            "price_currency": (pr.get("startPrice") or pr.get("endPrice") or {}).get("currencyCode", "")}
+
+
 def main(notes_tag, limit, output):
     wanted = None
     if notes_tag:
@@ -66,13 +76,9 @@ def main(notes_tag, limit, output):
             w.writeheader()
         for r in todo:
             data, status = fetch(r["google_place_id"].strip())
-            pr = (data or {}).get("priceRange") or {}
             w.writerow({"google_cid": r["google_cid"].strip(), "google_place_id": r["google_place_id"].strip(),
                         "korean_name": r["korean_name"], "country_code": r["country_code"],
-                        "price_level": (data or {}).get("priceLevel", ""),
-                        "price_min": money(pr.get("startPrice")) or "", "price_max": money(pr.get("endPrice")) or "",
-                        "price_currency": (pr.get("startPrice") or pr.get("endPrice") or {}).get("currencyCode", ""),
-                        "status": status})
+                        **price_fields(data), "status": status})
             out.flush()
             time.sleep(random.uniform(0.2, 0.5))
 
