@@ -1,6 +1,7 @@
 """셰프 추출 결과(data/chef_notes/{TAG}/*.json) -> restaurants.chef_name / chef_info 적재. 재실행해도 결과가 같다.
 
-선행: migrate_chef_columns.sql 적용, extract_chef_info.py 실행.
+선행: migrate_chef_columns.sql 적용, extract_script_split.py 실행(셰프는 추출 단계에서 함께 뽑혀 결과의 chefs 에 들어 있다. --notes-tag 로 적재).
+      --dir 방식은 experiments/extract_chef_info.py 로 따로 뽑던 예전 결과(data/chef_notes)용이다.
   - 한 식당이 여러 영상·가게 항목에 나오면 이름(공백 제거 기준)으로 합친다. 같은 셰프는 한 번만 넣고, 근거가 더 강한 항목을 우선한다.
   - chef_name : 셰프 이름을 쉼표로 연결(오너·총괄 셰프 먼저, 확신도 높은 순). 확신도가 --min-confidence 보다 낮은 이름은 넣지 않는다.
   - chef_info : "이름: 경력" 을 " / " 로 연결. 경력은 영상에서 한 말이라 검증된 사실이 아니다.

@@ -8,11 +8,11 @@
 - A와 B는 서로 입력에 의존하지 않아 기본으로 동시에 호출한다(--sequential 로 순차 호출). 자막을 user 메시지 맨 앞에 두어
   OpenAI 자동 프롬프트 캐시(앞부분이 같은 호출)가 적용될 수 있게 했다. 동시 호출이면 캐시가 안 걸릴 수 있다.
 - 셰프(C)와 코스 여부(D)는 기존 검증된 함수를 그대로 쓴다. 한 호출에 필드를 더하면 추출이 흔들렸기 때문에 별도 호출이다.
-  - C: extract_chef_info.chefs_for_store. 결과 중 대표 셰프(owner_chef, head_chef)만 남긴다. background 에 경력·수상·철학 같은 관련 언급을 담는다.
-  - D: extract_script_course.detect_course. '코스' 단어가 있는 자막 줄을 코드가 골라 보여 주고 코스 여부와 근거 줄을 받는다.
+  - C: common.chefs_for_store. 결과 중 대표 셰프(owner_chef, head_chef)만 남긴다. background 에 경력·수상·철학 같은 관련 언급을 담는다.
+  - D: common.detect_course. '코스' 단어가 있는 자막 줄을 코드가 골라 보여 주고 코스 여부와 근거 줄을 받는다.
 - 코스 카테고리: B 가 요리마다 course_stage(아뮤즈부쉬, 식전빵, 전채, 수프, 생선, 메인, 치즈, 프리디저트, 디저트, 프티푸르)를 적는다.
   분류할 수 없거나 코스가 아니면 null 이다. D 가 코스가 아니라고 판단한 가게는 course_stage 를 모두 null 로 지운다.
-- 메뉴 시각(mentioned_at)은 extract_script_notes.py 의 fix_times 로 실제 자막 시각에 맞추고 맞지 않으면 null 로 버린다.
+- 메뉴 시각(mentioned_at)은 common.py 의 fix_times 로 실제 자막 시각에 맞추고 맞지 않으면 null 로 버린다.
 - 결과는 data/video_notes/{TAG}/{video_id}__{google_cid}.json 에 건별 저장한다. 키 구조는 기존 결과와 같아서
   src/db/load_notes.py --model {TAG} 로 적재할 수 있다. 이미 있는 가게는 건너뛰므로 중단 후 재실행하면 이어서 처리된다.
   usage 에는 A, B 호출별 토큰·시간과 합계가 들어 있어 기존 방식과 비용·시간을 비교할 수 있다.
@@ -34,28 +34,28 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-import extract_script_notes as base
-from extract_script_notes import (
+from common import (
+    MAX_CONSECUTIVE_FAILS,
     MODEL,
     PRICE_PER_M,
     ROOT,
     TIME_RULES,
     TRANSCRIPT_DIR,
+    Drink,
+    chefs_for_store,
+    client,
     describe,
+    detect_course,
     fix_times,
+    key_of,
     load_stores,
+    strip_generic,
+    video_parts,
 )
-from chunk_transcripts import video_parts
-from extract_chef_info import chefs_for_store
-from extract_script_course import detect_course
-from compare_prompt_v3 import key_of
-from extract_script_v7 import strip_generic
-from extract_transcript_notes import Drink
 from get_transcripts_since import format_timestamp
 
 TAG = "gpt-4o-mini-script-split-v2"
 BASELINE_TAG = "gpt-4o-mini-script-v2"
-MAX_CONSECUTIVE_FAILS = 3
 
 
 # -------------------------------------------------------------
@@ -180,7 +180,7 @@ def call(system: str, store: dict, others: List[dict], transcript: str, schema, 
     """자막을 user 메시지 맨 앞에 두고(프롬프트 캐시), 가게 지정은 뒤에 붙인다. (결과, usage dict) 반환."""
     others_text = "\n".join(f"- {describe(o)}" for o in others) or "(없음)"
     started = time.time()
-    response = base.client.beta.chat.completions.parse(
+    response = client.beta.chat.completions.parse(
         model=MODEL,
         temperature=0,
         seed=42,

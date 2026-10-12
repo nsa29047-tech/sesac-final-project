@@ -14,6 +14,11 @@ data/transcripts/{video_id}.txt 자막에서 식당 관련 비정형 정보(메�
   uv run python src/pipeline/extract_transcript_notes.py                   # 전체(이어서 처리)
 """
 
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))  # experiments/ 밖의 pipeline 모듈(get_transcripts_since 등)을 import 하기 위해
+
 import argparse
 import json
 import os
@@ -28,7 +33,7 @@ from extract_restaurant_info import extract_stores_from_description, get_youtube
 
 load_dotenv()
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 TRANSCRIPT_DIR = ROOT / "data" / "transcripts"
 OUTPUT_DIR = ROOT / "data" / "transcript_notes"
 MODEL = "gpt-4o-mini"

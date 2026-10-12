@@ -20,6 +20,11 @@ data/compare/{방식}/{video_id}__{google_cid}.json 에 건별 저장한다(이�
   uv run python src/pipeline/compare_extraction_methods.py --report-only
 """
 
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))  # experiments/ 밖의 pipeline 모듈(get_transcripts_since 등)을 import 하기 위해
+
 import argparse
 import json
 import os
@@ -41,7 +46,7 @@ from extract_video_notes import (
     load_stores,
 )
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 TRANSCRIPT_DIR = ROOT / "data" / "transcripts"
 VIDEO_DIR = ROOT / "data" / "video_notes" / GEMINI_MODEL
 COMPARE_DIR = ROOT / "data" / "compare"

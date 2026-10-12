@@ -33,25 +33,22 @@ sesac-final-project/
 ├── src/
 │   ├── app.py                          # LangGraph 앱 (graph 엔트리포인트, 현재 빈 그래프)
 │   ├── pipeline/                       # 데이터 수집 파이프라인
+│   │   ├── common.py                   # 자막 추출 단계의 공통 코드(셰프 추출 chefs_for_store 포함): 경로·모델·OpenAI 클라이언트, load_stores, 시각 보정(fix_times), 평가어 제거(strip_generic), 영상 구간 나누기(video_parts), 코스 판단(detect_course), 음식 분류(classify_cuisine)
 │   │   ├── collect_video_urls.py       # 1. 채널 영상 URL 수집 (yt-dlp, 이분 탐색)
 │   │   ├── channel_video_filter.py     # 2. 영상 소개란 기준 필터링
 │   │   ├── extract_restaurant_info.py  # 3. 식당 정보 추출 + Places/미슐랭 조회, 중국(CN) 제외
 │   │   ├── fill_michelin.py            # 3-b. 미슐랭 미조회 식당을 하루 한도만큼씩 채움 (--only-notes 태그: 자막 분석 결과가 있는 식당만)
-│   │   ├── fetch_price_level.py        # Places Details priceLevel/priceRange 수집 -> data/restaurant_prices_sample.csv (건별 저장, 이어받기). 새 식당은 3번이 Text Search 때 같이 받으므로 이 스크립트는 그 전에 매칭된 식당을 채울 때만 씀
 │   │   ├── export_review_list.py       # 3-c. 사람이 확인할 식당(미슐랭 후보·매칭 실패·숙소)을 xlsx로 추출
-│   │   ├── michelin_api_probe.py       # Parse(Michelin) API 호출 확인용
-│   │   ├── enrich_regions.py           # 4. 지역(시 > 구/군 > 동) 보강
-│   │   ├── extract_video_notes.py      # (보류) Gemini 영상 분석. 자동 생성 자막 영상 보강용으로 예정, 현재 미사용
-│   │   ├── extract_script_notes.py     # 5'. 자막 기반 추출 (시각 자막 입력, 메뉴별 mentioned_at 포함, gpt-4o-mini)
-│   │   ├── compare_prompt_v3.py        # 5'''. 자막 추출 프롬프트 실험(v2/v3/v4, 구간 분할, v5=구간 분할+LLM 중복 제거) -> data/compare/prompt_v3_*.md
-│   │   ├── extract_chef_info.py        # 5''. 자막에서 가게별 셰프(이름·역할·경력·근거) 추출, 확신도는 코드로 계산 -> data/chef_notes/
+│   │   ├── enrich_places_details.py   # 4. Places Details 1회로 지역(시 > 구/군 > 동) 보강 + (--prices) 가격대 수집 -> data/restaurant_regions.csv, data/restaurant_prices_sample.csv. 예전 enrich_regions.py + fetch_price_level.py
 │   │   ├── extract_script_split.py     # 5''''. A/B 분리 추출(A 가게 정보 / B 메뉴·음료·코스 단계 + 코스 판단·셰프 호출), 건별 저장 -> data/video_notes/gpt-4o-mini-script-split-v2/ (2026년), -2025/ (2025년), -2024/ (2024년). 2024년 영상은 환경변수 TARGETS_FILE=data/urls/transcript_targets_20240101.txt 로 대상 목록을 바꿔 실행
-│   │   ├── reclassify_split_cuisine.py # 5-b. A/B 분리 결과의 음식 분류(대분류·소분류·태그)만 별도 호출로 다시 정함
-│   │   ├── postprocess_split.py        # 5-c. A/B 분리 결과 후처리(평가어·가격 문장, 코스 단계 보정, 음료 중복, 식당 이름 셰프 제거), 원본은 *_raw 폴더에 백업
+│   │   ├── postprocess_split.py        # 5-b. A/B 분리 결과 후처리(음식 분류 다시 정하기(예전 reclassify_split_cuisine.py), 평가어·가격 문장, 코스 단계 보정, 음료 중복, 식당 이름 셰프 제거), 원본은 *_raw 폴더에 백업
 │   │   ├── get_transcripts_since.py    # 자막 수집 (yt-dlp, 기본 2025-01-01 이후·적재 가능 영상만, --since 로 날짜 변경, 이어받기)
-│   │   ├── compare_extraction_methods.py # 추출 방식 비교 실험: video / 자막 / 하이브리드 (data/compare/report.md, 초기 실험)
-│   │   ├── save_scripts.py             # (미사용) 자막 수집 - youtube-transcript-api
-│   │   └── extract_transcript_notes.py # (미사용) 자막 기반 추출. TranscriptNotes 스키마는 5번이 import
+│   │   └── experiments/                # 실험·보류·미사용 코드. 지금 파이프라인은 import 하지 않음(sys.path로 pipeline 모듈만 가져다 씀)
+│   │       ├── extract_script_notes.py / extract_script_course.py / extract_script_v7.py / extract_script_two_stage.py / compare_prompt_v3.py  # 자막 추출 프롬프트 실험(A/B 분리 이전 방식)
+│   │       ├── compare_extraction_methods.py / extract_video_notes.py  # video / 자막 / 하이브리드 비교, Gemini 영상 분석(보류, 자동 자막 보강용)
+│   │       ├── chunk_transcripts.py / extract_transcript_notes.py / check_course_gold.py  # 자막 원문 청킹 실험, 초기 스키마, 코스 점검표
+│   │       ├── extract_chef_info.py  # 셰프 단독 추출(예전 방식, data/chef_notes). 지금은 extract_script_split.py 가 추출 때 함께 뽑음
+│   │       └── probe_price.py / michelin_api_probe.py / save_scripts.py  # 가격대·Parse API 확인용, 옛 자막 수집
 │   └── db/
 │       ├── restaurant_schema.sql       # PostgreSQL 테이블 정의
 │       ├── restaurant_chunks.sql       # RAG 청크 테이블 (pgvector)
@@ -74,7 +71,7 @@ sesac-final-project/
 │       ├── migrate_split_schema.sql    # 마이그레이션(10/8): A/B 분리 결과용. menus.cooking_features->description, taste_review/tips/price_text 삭제, menu_order·course_stage, video_restaurant_notes.is_course·course_name
 │       ├── migrate_price_columns.sql   # 마이그레이션(10/8): restaurants.price_level/price_min/price_max/price_currency
 │       ├── migrate_chef_chunk.sql      # 마이그레이션(10/8): restaurant_chunks에 CHEF 청크 종류 추가
-│       ├── load_prices.py              # fetch_price_level.py 결과 -> restaurants 가격 컬럼
+│       ├── load_prices.py              # enrich_places_details.py --prices 결과 -> restaurants 가격 컬럼
 │       ├── create_scope_views.sql      # 챗봇 조회 범위 뷰: restaurants_in_scope 등 (자막 분석 노트가 있는 식당만)
 │       ├── create_chatbot_role.sql     # 챗봇 전용 DB 계정(뷰와 검색 테이블만 조회, 원본 테이블 조회 불가). 비밀번호를 채워 직접 실행
 │       ├── rag_search.py               # 검색 모듈: SQL 필터 -> 벡터 후보 -> LLM 충족 판단(맞는 결과 없으면 빈 목록)
@@ -101,7 +98,7 @@ sesac-final-project/
 
 ```
 영상 URL 수집 ─▶ 필터링 ─▶ 식당 정보 추출 ─▶ 미슐랭 채우기 ─▶ 지역 보강 ─▶ 자막 수집 ─▶ 자막 분석(GPT) ─▶ DB 적재
- (collect_*)     (filter)   (extract_restaurant)  (fill_michelin)  (enrich_regions) (get_transcripts_since, extract_script_split)  (load_*)
+ (collect_*)     (filter)   (extract_restaurant)  (fill_michelin)  (enrich_places_details) (get_transcripts_since, extract_script_split)  (load_*)
 ```
 
 1. **영상 URL 수집** (`collect_video_urls.py`): yt-dlp로 채널 영상 목록을 가져와, 이분 탐색으로 2023-01-01 이후 영상만 골라 `channel_video_urls.txt`에 저장합니다. `--since`, `--channel` 옵션으로 기준일과 채널을 바꿀 수 있습니다. (기존 `notebooks/crawling.ipynb` 첫 셀을 스크립트화)
@@ -109,13 +106,13 @@ sesac-final-project/
 3. **식당 정보 추출** (`extract_restaurant_info.py`):
    - yt-dlp로 소개란을 가져와 OpenAI로 식당 한국어 상호명·주소·국가코드를 추출
    - 중국 본토(`country_code`가 `CN`)는 제외합니다(Places 호출 전에 건너뜀). 홍콩·마카오·대만은 유지합니다. 판별 기준이 LLM이 추정한 국가코드라 중국 식당을 다른 국가로 표기하면 걸러지지 않습니다(`EXCLUDED_COUNTRY`)
-   - Google Places API(Text Search)로 공식 상호명, 주소, 좌표, 평점, 영업 상태, 연락처, 영업시간을 조회. 음식 분류(대분류/세부/태그)는 CSV에 저장하지 않고 자막 분석 결과를 씁니다. 가격대(`priceLevel`/`priceRange`)는 같은 Text Search 응답(이미 Enterprise 등급이라 추가 비용 없음)에서 받아 22컬럼 CSV가 아니라 `data/restaurant_prices_sample.csv`에 기록합니다(`fetch_price_level.py`와 같은 컬럼이라 `load_prices.py`를 그대로 씁니다). 지역(`addressComponents`)은 합치지 않았습니다: 이 검색은 languageCode를 주지 않아 영문 지명(Seoul / Jung District)이 오는데, 공식 상호명도 같은 호출의 영문 표기를 쓰고 있어 언어를 바꿀 수 없고, 지역은 한국어(`languageCode=ko`)로 받아야 하므로 4번이 Details로 따로 받습니다. 숙소(호텔·료칸 등)로 매칭된 장소는 영상 제목으로 판단합니다: 제목에 식당·식사·요리 관련 단어(레스토랑, 식당, 식사, 요리, 밥, 디너, 맛집)가 있으면 가져오고(`note`에 '숙소로 매칭됨' 표시), 없으면 호텔 후기·료칸 소개가 주 소재라고 보고 제외합니다. 같은 영상에서 300m 이내에 다른 식당 행이 있는 숙소 행도 식당 정보에 딸려 적힌 것으로 보고 뺍니다
+   - Google Places API(Text Search)로 공식 상호명, 주소, 좌표, 평점, 영업 상태, 연락처, 영업시간을 조회. 음식 분류(대분류/세부/태그)는 CSV에 저장하지 않고 자막 분석 결과를 씁니다. 가격대(`priceLevel`/`priceRange`)는 같은 Text Search 응답(이미 Enterprise 등급이라 추가 비용 없음)에서 받아 22컬럼 CSV가 아니라 `data/restaurant_prices_sample.csv`에 기록합니다(`enrich_places_details.py --prices`와 같은 컬럼이라 `load_prices.py`를 그대로 씁니다). 지역(`addressComponents`)은 합치지 않았습니다: 이 검색은 languageCode를 주지 않아 영문 지명(Seoul / Jung District)이 오는데, 공식 상호명도 같은 호출의 영문 표기를 쓰고 있어 언어를 바꿀 수 없고, 지역은 한국어(`languageCode=ko`)로 받아야 하므로 4번이 Details로 따로 받습니다. 숙소(호텔·료칸 등)로 매칭된 장소는 영상 제목으로 판단합니다: 제목에 식당·식사·요리 관련 단어(레스토랑, 식당, 식사, 요리, 밥, 디너, 맛집)가 있으면 가져오고(`note`에 '숙소로 매칭됨' 표시), 없으면 호텔 후기·료칸 소개가 주 소재라고 보고 제외합니다. 같은 영상에서 300m 이내에 다른 식당 행이 있는 숙소 행도 식당 정보에 딸려 적힌 것으로 보고 뺍니다
    - Parse(guide.michelin.com) API로 미슐랭 현재 등급을 판별: 검색 결과 중 이름과 도시(또는 거리 주소)가 일치하는 식당만 채택하고, 일치하는 식당이 없으면 `NONE`. API는 현재 등급만 주므로 연도별 이력은 저장하지 않습니다. 무료 플랜의 분당 5회 제한 때문에 호출 사이에 약 12.5초 간격을 둡니다. `--michelin-fallback`을 주면 일치 식당이 없을 때 기존 Tavily 검색으로 한 번 더 확인합니다(호출 증가).
    - Parse API는 **하루 100회 제한**이 있어서(식당 약 240곳이면 3일), 전체 실행은 `--skip-michelin`으로 미슐랭을 건너뛰고(`note`에 '미슐랭 미조회' 표시) 나중에 `fill_michelin.py`로 하루 한도(기본 90회)만큼씩 채웁니다. 같은 식당이 여러 영상에 나오면 한 번만 조회하고, 한도에 도달하면 멈췄다가 다음 날 이어서 처리합니다. `google_cid`가 없는 행은 건너뜁니다. 미슐랭을 못 채운 행은 `load_restaurants.py`가 `michelin_status`를 만들지 않습니다.
    - 건마다 CSV에 즉시 기록해 중간에 중단되어도 결과가 보존되며, 완료 후 xlsx로 변환
    - `export_review_list.py`: 사람이 확인할 행(미슐랭 후보, Google 매칭 실패, 숙소로 매칭된 행)만 뽑아 xlsx로 저장합니다
-4. **지역 보강** (`enrich_regions.py`): 3번 CSV의 `google_place_id`로 Places Details의 `addressComponents`에서 시 > 구/군 > 동·면(서울특별시 > 마포구 > 연남동, 성남시 > 분당구 > 정자동)을 뽑아 `data/restaurant_regions.csv`에 건별로 저장합니다. 없는 단계는 건너뛰고 있는 데까지만 저장하며(안동시는 시만, 도로명 주소라 동이 없으면 구까지), 도로명은 쓰지 않습니다. 식당당 Details 1회이고, 재실행하면 이어서 처리합니다. `--limit`으로 샘플을 먼저 검증하세요. "OO역/OO 근처" 질문은 지역 컬럼이 아니라 식당의 위경도로 반경 검색합니다(질문 시점에 지명의 좌표를 조회). DB 적재는 6번의 `load_regions.py`가 합니다.
-5. **자막 수집·분석**: `get_transcripts_since.py`(yt-dlp)로 제작자 한국어 자막(없으면 자동 생성 자막)을 구간별 시각과 함께 받고(`data/transcripts/{video_id}.json`), `extract_script_split.py`가 3번의 CSV를 가게 목록으로 삼아 자막만으로 가게 정보(A)와 메뉴·음료(B)를 나눠 추출합니다(`gpt-4o-mini`, 가게당 3~4회 호출). 한 영상에 가게가 여러 곳이면 가게별 자막 구간만 입력으로 줍니다. 이어서 `reclassify_split_cuisine.py`(음식 분류)와 `postprocess_split.py`(평가어·코스 단계 보정)를 거치고, 결과는 `data/video_notes/{tag}/{video_id}__{google_cid}.json`에 저장됩니다. Google 매칭에 실패한 가게는 건너뜁니다. 현재는 이 자막 분석만 쓰고, **추후 자동 생성 자막 영상(오타·누락이 많음)에 한해 Gemini 영상 분석(`extract_video_notes.py`)으로 보강할 계획**입니다. 제작자 자막 영상은 자막 분석으로 충분하다고 봅니다.
+4. **지역·가격대 보강** (`enrich_places_details.py`, 가격대는 `--prices`일 때만): 3번 CSV의 `google_place_id`로 Places Details의 `addressComponents`에서 시 > 구/군 > 동·면(서울특별시 > 마포구 > 연남동, 성남시 > 분당구 > 정자동)을 뽑아 `data/restaurant_regions.csv`에 건별로 저장합니다. 없는 단계는 건너뛰고 있는 데까지만 저장하며(안동시는 시만, 도로명 주소라 동이 없으면 구까지), 도로명은 쓰지 않습니다. 식당당 Details 1회이고, 재실행하면 이어서 처리합니다. `--limit`으로 샘플을 먼저 검증하세요. "OO역/OO 근처" 질문은 지역 컬럼이 아니라 식당의 위경도로 반경 검색합니다(질문 시점에 지명의 좌표를 조회). DB 적재는 6번의 `load_regions.py`가 합니다.
+5. **자막 수집·분석**: `get_transcripts_since.py`(yt-dlp)로 제작자 한국어 자막(없으면 자동 생성 자막)을 구간별 시각과 함께 받고(`data/transcripts/{video_id}.json`), `extract_script_split.py`가 3번의 CSV를 가게 목록으로 삼아 자막만으로 가게 정보(A)와 메뉴·음료(B)를 나눠 추출합니다(`gpt-4o-mini`, 가게당 3~4회 호출). 한 영상에 가게가 여러 곳이면 가게별 자막 구간만 입력으로 줍니다. 이어서 `postprocess_split.py`(음식 분류 다시 정하기, 평가어·코스 단계 보정)를 거치고, 결과는 `data/video_notes/{tag}/{video_id}__{google_cid}.json`에 저장됩니다. Google 매칭에 실패한 가게는 건너뜁니다. 현재는 이 자막 분석만 쓰고, **추후 자동 생성 자막 영상(오타·누락이 많음)에 한해 Gemini 영상 분석(`extract_video_notes.py`)으로 보강할 계획**입니다. 제작자 자막 영상은 자막 분석으로 충분하다고 봅니다.
 6. **DB 적재**: `load_restaurants.py`(식당·영상·영업시간·미슐랭) → `load_regions.py`(`restaurants.region_1/2/3`) → `load_notes.py`(카테고리·태그·메뉴·노트) → `embed_chunks.py`(청크 임베딩). 모두 여러 번 실행해도 중복되지 않습니다.
 
 ## DB 스키마
@@ -176,7 +173,7 @@ uv run python src/pipeline/channel_video_filter.py                        # 2. �
 uv run python src/pipeline/extract_restaurant_info.py --skip-michelin   # Parse 하루 100회 제한 때문에 미슐랭은 건너뜀
 uv run python src/pipeline/fill_michelin.py                               # 하루 한도(기본 90회)만큼씩 미슐랭 채움, 남으면 다음 날 다시 실행
 uv run python src/pipeline/export_review_list.py                          # (선택) 사람이 확인할 식당 목록 xlsx
-uv run python src/pipeline/enrich_regions.py --limit 10 --output data/restaurant_regions_sample.csv   # 샘플 검증 후 전체
+uv run python src/pipeline/enrich_places_details.py --limit 10 --regions-output data/restaurant_regions_sample.csv   # 샘플 검증 후 전체
 ```
 
 ### 4. DB 구축
@@ -203,14 +200,14 @@ uv run python src/db/load_notes.py --model $TAG
 uv run python src/db/load_chefs.py --notes-tag $TAG
 uv run python src/pipeline/fill_michelin.py --only-notes $TAG        # Parse 호출(하루 100회 한도, 결과는 CSV에 저장)
 uv run python src/db/load_restaurants.py data/restaurants_info.xlsx   # 미슐랭 결과를 DB에 반영
-uv run python src/pipeline/fetch_price_level.py --notes-tag $TAG      # (3번 이전에 매칭된 식당만) 가게 수만큼 Places Details 호출 (Enterprise SKU 필드, 호출당 약 $0.02)
+uv run python src/pipeline/enrich_places_details.py --prices --skip-regions --notes-tag $TAG      # (3번 이전에 매칭된 식당만) 가게 수만큼 Places Details 호출 (Enterprise SKU 필드, 호출당 약 $0.02)
 uv run python src/db/load_prices.py
 uv run python src/db/embed_chunks.py
 uv run python src/db/test_rag.py                                      # 검색 확인
 ```
 
 - 2024년 결과는 대상 목록이 달라 추출 때 `TARGETS_FILE=data/urls/transcript_targets_20240101.txt`가 필요합니다(적재 명령에는 필요 없음).
-- 추출 후 `reclassify_split_cuisine.py --tag $TAG`, `postprocess_split.py --tag $TAG`를 먼저 실행합니다. 영상 ID가 `-`로 시작하면 `--video-id=ID` 형태로 넘깁니다.
+- 추출 후 `postprocess_split.py --tag $TAG`를 먼저 실행합니다(음식 분류 다시 정하기 포함). 영상 ID가 `-`로 시작하면 `--video-id=ID` 형태로 넘깁니다.
 - `load_notes.py`·`load_chefs.py`·`embed_chunks.py`는 여러 번 실행해도 중복되지 않습니다. `fill_michelin.py`는 미조회 식당만 호출합니다.
 
 이미 이전 스키마를 적용한 DB는 `uv run python src/db/backup_tables.py`로 백업한 뒤 `migrate_notes.sql` → `migrate_regions.sql` → `migrate_trim_columns.sql` → `migrate_simplify_schema.sql` 순으로 필요한 것만 적용합니다.
@@ -232,7 +229,7 @@ uv run langgraph dev
 - [x] 비정형 정보 추출·적재(자막 방식 테스트): 2025-01-01 이후 영상 121개의 165곳(159개 식당)을 `extract_script_notes.py`로 추출해 `load_notes.py --model gpt-4o-mini-script-v2`, `embed_chunks.py`로 적재했습니다(메뉴 904: 음식 793·음료 111, 태그 798, 청크 951: OVERVIEW 165·FOOD 677·DRINK 109. 설명이 없는 메뉴는 청크로 만들지 않으며 메뉴 원본은 `menus`에서 조회합니다. FOOD/DRINK 청크 content에는 식당 이름을 넣지 않고 "메뉴명: 설명"만 두며, 식당 정보는 `restaurant_id`로 조인합니다). 메뉴 시각은 음식에만 있고(793개 중 790개) `menus.mentioned_sec`(자막 추정치)에 저장되며 음료는 시각을 저장하지 않습니다. 음식으로 잘못 분류된 음료 5개(음식 798개를 gpt-4o-mini로 재분류해 확인)는 원본 JSON과 DB를 모두 DRINK로 고쳤습니다(`fix_misclassified_drinks.sql`). 영상 분석 방식(`extract_video_notes.py`)은 5개 영상만 실행했고 결과 JSON은 `data/video_notes/gemini-3.5-flash-lite/`에 있습니다. 두 방식의 품질 비교와 환각·누락 검증은 아직 하지 않았습니다
 - [x] 셰프 정보(자막 방식): 96곳을 `extract_chef_info.py`로 추출하고 `load_chefs.py`로 `restaurants.chef_name`(여러 명은 쉼표로 연결)·`chef_info`에 27곳 적재했습니다(159개 식당 중 17%). 모델 판단을 그대로 믿으면 약 30%가 틀려서("사장님", 채널 운영자, 식당 이름, 같은 영상의 다른 가게 셰프 등) 적재 단계에서 규칙으로 거르고, 확신도 low(자동 자막에서 한 번만 나온 이름 등)는 넣지 않습니다. 규칙으로 걸러지지 않은 3건은 사람이 확인해 `MANUAL_EXCLUDE`에 사유와 함께 남겼습니다. `chef_info`의 경력·수상은 유튜버가 영상에서 한 말이라 검증된 사실이 아니고, 정답 기준으로 적재 결과 전체를 검증하지는 않았습니다. 셰프 이름·경력은 OVERVIEW 청크에도 넣었습니다(28개 재임베딩). 다만 개요 청크가 길어 경력 질문의 검색 순위가 낮아서("흑백요리사 출연 셰프" 질문에서 팔선 12위, 베수비오 20위) 짧은 CHEF 청크나 키워드 검색 보완이 필요합니다. 셰프 이름이 식당 이름에 들어 있는 경우(예: 알랭 뒤카스)와 한 영상의 여러 가게에 걸친 셰프(예: 우동카덴의 정호영)는 규칙상 빠집니다
 - [x] 자막 추출 품질 개선 실험(A/B 분리 추출로 대체되어 DB에는 적용하지 않음): 현재 적재된 v2는 맛 표현의 40%가 자막 문장 그대로이고 팁을 지어내며, 자동 생성 자막 영상은 메뉴가 평균 3.5개(제작자 자막은 6.1개)로 누락이 많습니다. `compare_prompt_v3.py`로 3개 영상(르 퀸시, 레 프레 드 외제니, 비움)에서 비교한 결과 v4 프롬프트가 구어체를 정리하고 지어낸 팁을 없앴으며, 구간 분할(6분 단위)이 누락을 크게 줄이지만 중복을 만들어 v5(LLM 중복 제거+범주 이름·같은 시각 규칙)로 막았습니다. 제작자 자막으로 이미 잘 나오는 영상(비움)에서는 구간 분할이 반찬 같은 설명 없는 항목만 늘려서 자동 생성 자막 영상에만 적용하는 방안을 검토 중입니다. 3개 영상만 확인했고 전체 적용 전 추가 검증이 필요합니다. 2단계 추출(`extract_script_two_stage.py`)도 시험했으나 시각·누락 보완은 좋아지는 반면 요리별 설명이 많이 비고 같이 나온 요리의 평가가 섞여서, 자막만으로는 한계가 있어 하이브리드(영상+자막) 재검토가 필요합니다
-- [x] A/B 분리 추출(10/7 개발, 10/8 DB 적용: 51곳, 메뉴 462, 청크 430): 한 번에 많은 필드를 뽑는 부담을 줄이려고 가게 정보(A: 컨셉·분류·분위기·키포인트)와 메뉴·음료(B)를 두 호출로 나눴습니다(`extract_script_split.py`). 코스 판단(`detect_course`)을 먼저 하고 B에 알려 코스면 요리마다 `course_stage`(아뮤즈부쉬, 식전빵, 전채, 수프, 생선, 메인, 치즈, 프리디저트, 디저트, 프티푸르)를 적으며, 셰프는 `chefs_for_store`를 별도 호출로 써서 대표 셰프(오너·총괄)만 남깁니다. 모든 호출은 가게별 자막 구간(`video_parts`)만 입력으로 받아 가게가 여러 곳인 영상에서 요리가 섞이는 문제를 막았습니다. 메뉴 설명 칸은 `cooking_features` 하나로 합쳤고(`taste_review`·`tips`·`price` 제거) 재료·조리법·맛 묘사·구체적인 평가를 요약해서 담습니다. 2026년 수동 자막 영상 34개(49곳, ID는 `data/urls/split_targets_2026_manual.txt`)를 실행했습니다(약 $0.15). 기존 v2와 비교(49곳)하면 메뉴가 5.5→7.4개, 설명 길이 23→48자, 키포인트 2.5→3.2개로 늘었고 비용은 가게당 $0.0019→$0.0031, 시간은 8.4→16.4초입니다. 이후 음식 분류만 별도 호출로 다시 정했고(`reclassify_split_cuisine.py`, 한국 식당과 스페인 타파스 바가 중식으로 잘못 분류된 12곳 등 15곳이 바뀜, 이전 값은 `cuisine_before`) 후처리했습니다(`postprocess_split.py`: 평가어·가격 문장 정리, 코스 단계 보정, 음료가 메뉴로 들어간 1건과 식당 이름이 셰프로 들어간 2건 제거). 평가어는 근거 없이 평가만 있는 문장만 제거하는 기준이고, 남은 "식감이 좋다"·"맛있는 버터" 같은 표현(18개)은 확인 후 그대로 쓰기로 했다. 남은 문제: 코스 단계가 `메인`에 몰리고 일부 오분류라 필터가 아닌 참고용으로만 쓸 것, 설명이 없는 메뉴 66개(18%)는 실제로 먹었는지 미확인, 정답 기준이 없어 환각·누락은 판단하지 못했고 자동 자막 영상(55개)에는 적용해 보지 않았습니다. 기존 자막 방식 결과(165곳)는 DB에서 삭제하고 이 결과 51곳만 적재했습니다(백업 `data/backup_20261008_100934/`)
+- [x] A/B 분리 추출(10/7 개발, 10/8 DB 적용: 51곳, 메뉴 462, 청크 430): 한 번에 많은 필드를 뽑는 부담을 줄이려고 가게 정보(A: 컨셉·분류·분위기·키포인트)와 메뉴·음료(B)를 두 호출로 나눴습니다(`extract_script_split.py`). 코스 판단(`detect_course`)을 먼저 하고 B에 알려 코스면 요리마다 `course_stage`(아뮤즈부쉬, 식전빵, 전채, 수프, 생선, 메인, 치즈, 프리디저트, 디저트, 프티푸르)를 적으며, 셰프는 `chefs_for_store`를 별도 호출로 써서 대표 셰프(오너·총괄)만 남깁니다. 모든 호출은 가게별 자막 구간(`video_parts`)만 입력으로 받아 가게가 여러 곳인 영상에서 요리가 섞이는 문제를 막았습니다. 메뉴 설명 칸은 `cooking_features` 하나로 합쳤고(`taste_review`·`tips`·`price` 제거) 재료·조리법·맛 묘사·구체적인 평가를 요약해서 담습니다. 2026년 수동 자막 영상 34개(49곳, ID는 `data/urls/split_targets_2026_manual.txt`)를 실행했습니다(약 $0.15). 기존 v2와 비교(49곳)하면 메뉴가 5.5→7.4개, 설명 길이 23→48자, 키포인트 2.5→3.2개로 늘었고 비용은 가게당 $0.0019→$0.0031, 시간은 8.4→16.4초입니다. 이후 음식 분류만 별도 호출로 다시 정했고(`postprocess_split.py`, 한국 식당과 스페인 타파스 바가 중식으로 잘못 분류된 12곳 등 15곳이 바뀜, 이전 값은 `cuisine_before`) 후처리했습니다(`postprocess_split.py`: 평가어·가격 문장 정리, 코스 단계 보정, 음료가 메뉴로 들어간 1건과 식당 이름이 셰프로 들어간 2건 제거). 평가어는 근거 없이 평가만 있는 문장만 제거하는 기준이고, 남은 "식감이 좋다"·"맛있는 버터" 같은 표현(18개)은 확인 후 그대로 쓰기로 했다. 남은 문제: 코스 단계가 `메인`에 몰리고 일부 오분류라 필터가 아닌 참고용으로만 쓸 것, 설명이 없는 메뉴 66개(18%)는 실제로 먹었는지 미확인, 정답 기준이 없어 환각·누락은 판단하지 못했고 자동 자막 영상(55개)에는 적용해 보지 않았습니다. 기존 자막 방식 결과(165곳)는 DB에서 삭제하고 이 결과 51곳만 적재했습니다(백업 `data/backup_20261008_100934/`)
 - [x] 가격대(Places priceLevel/priceRange): 51곳 샘플로 41곳(80%)에 값이 있는 것을 확인하고 `restaurants`에 적재. 노트가 없는 식당은 호출하지 않음
 - [x] 수동 자막 영상 확대(10/8): 200개 영상 중 제작자 수동 한국어 자막은 126개(2024년 51·2025년 38·2026년 37), 자동 생성 72개, 자막 없음 2개입니다. 2025년 수동 자막 32개 영상 34곳(중국 본토 6개 영상 제외, ID `data/urls/manual_2025_ids.txt`)과 2024년 40개 영상 41곳(`data/urls/manual_2024_ready_ids.txt`, 가게 정보 없음 7·중국 4 제외)을 같은 A/B 분리 추출로 처리해 적재했습니다(결과 `gpt-4o-mini-script-split-v2-2025`·`-2024`, 각 약 $0.12). 미슐랭은 Parse 결과를 근거로 하고(영상 언급 아님) 철자 차이로 매칭이 실패한 아켈라레는 수동 반영했습니다. 식당 이름이 채널명("비밀이야")이나 일반 명칭으로 들어간 3건은 영상 제목 기준으로 고쳤고(라미띠에·뜨락·마틴 베라사테기), 소개란에 상호가 없으면 제목에서 찾도록 프롬프트에 규칙을 넣었습니다. Places가 건물로 잘못 매칭한 미츠이 2호관은 ACA(la cocina de acá)로 다시 매칭했습니다. 사용자가 제외한 4곳(파라다이스 X Les Amis, 순환수산, 광해호수산, 미가키쇼 나가야마)은 DB와 CSV에서 지웠습니다. 조회 범위는 51 → 120곳입니다. 아직 하지 않은 것: 자동 생성 자막 72개 영상, 소개란에 가게 정보가 없는 영상(꼼모아 강남 `nyKPQqu6674` 등), 환각·누락 검증
 - [x] CHEF 청크: 셰프 경력 질문 순위 개선("흑백요리사에 나온 셰프" 질문에서 팔선 8위 -> 1위)

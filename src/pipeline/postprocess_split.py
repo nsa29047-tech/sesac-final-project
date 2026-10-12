@@ -2,6 +2,10 @@
 A/B 분리 추출 결과(extract_script_split.py)를 후처리한다. 추출 호출은 다시 하지 않는다.
 
 고치는 것
+0. 음식 분류(category_broad, category_detail, cuisine_tags): A 호출이 한국 식당을 중식으로, 스페인 타파스 바를 중식으로 잘못 분류하는 일이 있어서
+   common.classify_cuisine(영상 제목·가게 이름·주소·국가·컨셉·키포인트·나온 메뉴를 보고 분류하는 별도 호출, 가게당 gpt-4o-mini 1회, 약 $0.0001)으로 다시 정한다.
+   분류 3개 필드만 덮어쓰고 이전 값은 cuisine_before 에 남긴다. 원본에 cuisine_before 가 이미 있으면(예전 reclassify_split_cuisine.py 를 거친 백업) 건너뛴다.
+   설명 정리 전의 설명을 보고 분류한다(예전 순서와 같다). --skip-cuisine 으로 건너뛸 수 있다.
 1. 설명(cooking_features, 음료 review)에 남은 평가어·가격 문장
    - 규칙: 재료·조리 단서 없이 평가만 있는 문장("맛이 좋다", "맛있어 보인다")은 지운다.
    - LLM(gpt-4o-mini, 가게당 1회, 평가어가 남은 항목이 있는 가게만): 구체적인 내용과 평가가 섞인 문장에서 평가·가격 부분만 빼고 다시 쓴다.
@@ -17,7 +21,7 @@ A/B 분리 추출 결과(extract_script_split.py)를 후처리한다. 추출 호
 결과 파일의 postprocess 키에 무엇을 고쳤는지 남긴다.
 
 실행 예:
-  uv run python src/pipeline/postprocess_split.py --dry-run     # 규칙만 적용해 건수 출력(API 호출 없음)
+  uv run python src/pipeline/postprocess_split.py --dry-run     # 규칙만 적용해 건수 출력(API 호출 없음, 음식 분류도 건너뜀)
   uv run python src/pipeline/postprocess_split.py
 """
 
@@ -30,8 +34,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from compare_prompt_v3 import key_of
-from extract_script_notes import MODEL, client
+from common import MODEL, classify_cuisine, client, key_of, load_stores
 
 ROOT = Path(__file__).resolve().parents[2]
 TAG = "gpt-4o-mini-script-split-v2"
@@ -153,6 +156,23 @@ def drop_restaurant_name_chefs(note: dict) -> List[str]:
     return dropped
 
 
+CUISINE_FIELDS = ("category_broad", "category_detail", "cuisine_tags")
+
+
+def reclassify_cuisine(note: dict, store: Optional[dict], usage: dict) -> Optional[bool]:
+    """음식 분류를 다시 정한다. 이미 했거나 가게 정보가 없으면 None, 했으면 대분류가 바뀌었는지(bool)."""
+    if "cuisine_before" in note or store is None:
+        return None
+    result = classify_cuisine(store, note, usage)
+    before = {k: note.get(k) for k in CUISINE_FIELDS}
+    note["cuisine_before"] = before
+    note["category_broad"], note["category_detail"], note["cuisine_tags"] = result["broad"], result["detail"], result["tags"]
+    if before["category_broad"] != result["broad"]:
+        print(f"[분류 변경] {note['video_id']} / {note['korean_name']}: {before['category_broad']}/{before['category_detail']} -> {result['broad']}/{result['detail']}")
+        return True
+    return False
+
+
 def process(note: dict, usage: Optional[dict]) -> dict:
     """한 가게의 결과를 후처리한다. usage 가 None 이면 LLM 을 호출하지 않는다."""
     before = sum(1 for m in note["menus"] if m.get("cooking_features") and FLAG_RE.search(m["cooking_features"]))
@@ -177,7 +197,7 @@ def process(note: dict, usage: Optional[dict]) -> dict:
     return note
 
 
-def main(tag: str, dry_run: bool) -> None:
+def main(tag: str, dry_run: bool, skip_cuisine: bool) -> None:
     out_dir, raw_dir = ROOT / "data" / "video_notes" / tag, ROOT / "data" / "video_notes" / f"{tag}_raw"
     if not raw_dir.exists():
         shutil.copytree(out_dir, raw_dir)
@@ -186,8 +206,15 @@ def main(tag: str, dry_run: bool) -> None:
     totals = {"flagged_before": 0, "sentence_rule_changed": 0, "llm_rewritten": 0, "cheese": 0, "fish": 0, "monotone": 0}
     dropped_menus, dropped_chefs, remaining = [], [], 0
     files = sorted(raw_dir.glob("*.json"))
+    stores = {(vid, s["google_cid"].strip()): s for vid, group in load_stores().items() for s in group}
+    cuisine_done = cuisine_changed = 0
     for f in files:
-        note = process(json.loads(f.read_text(encoding="utf-8")), usage)
+        note = json.loads(f.read_text(encoding="utf-8"))
+        if usage is not None and not skip_cuisine:  # 분류는 LLM 호출이라 dry-run 에서는 하지 않는다
+            changed = reclassify_cuisine(note, stores.get((note["video_id"], note["google_cid"])), usage)
+            cuisine_done += changed is not None
+            cuisine_changed += bool(changed)
+        note = process(note, usage)
         pp = note["postprocess"]
         for k in ("flagged_before", "sentence_rule_changed", "llm_rewritten"):
             totals[k] += pp[k]
@@ -200,6 +227,8 @@ def main(tag: str, dry_run: bool) -> None:
             (out_dir / f.name).write_text(json.dumps(note, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"{len(files)}곳 처리{' (dry-run: 규칙만, 파일은 쓰지 않음)' if dry_run else ''}")
     print(f"평가어 표현이 있던 메뉴 {totals['flagged_before']}개 -> 처리 후 {remaining}개 (규칙으로 고친 항목 {totals['sentence_rule_changed']}, LLM 으로 다시 쓴 항목 {totals['llm_rewritten']})")
+    if usage is not None and not skip_cuisine:
+        print(f"음식 분류를 다시 정한 가게 {cuisine_done}곳, 대분류가 바뀐 가게 {cuisine_changed}곳")
     print(f"코스 단계 보정: 치즈 {totals['cheese']}, 생선 {totals['fish']}, 순서 맞춤 {totals['monotone']}")
     print(f"음료라서 메뉴에서 뺀 항목: {dropped_menus}")
     print(f"식당 이름과 같아서 뺀 셰프: {dropped_chefs}")
@@ -209,8 +238,9 @@ def main(tag: str, dry_run: bool) -> None:
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="A/B 분리 추출 결과를 후처리한다(평가어, 코스 단계, 음료 중복, 셰프).")
+    ap = argparse.ArgumentParser(description="A/B 분리 추출 결과를 후처리한다(음식 분류, 평가어, 코스 단계, 음료 중복, 셰프).")
     ap.add_argument("--tag", default=TAG, help=f"대상 결과 폴더. 기본 {TAG}")
     ap.add_argument("--dry-run", action="store_true", help="LLM 을 부르지 않고 규칙만 적용해 건수를 본다(파일은 쓰지 않음)")
+    ap.add_argument("--skip-cuisine", action="store_true", help="음식 분류 다시 정하기를 건너뛴다")
     args = ap.parse_args()
-    main(args.tag, args.dry_run)
+    main(args.tag, args.dry_run, args.skip_cuisine)

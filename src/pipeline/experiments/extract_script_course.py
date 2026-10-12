@@ -23,6 +23,11 @@ load_notes.py --model gpt-4o-mini-script-course 로 적재할 수 있다. 이미
   uv run python src/pipeline/check_course_gold.py     # 지적받은 오류가 고쳐졌는지 점검
 """
 
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))  # experiments/ 밖의 pipeline 모듈(get_transcripts_since 등)을 import 하기 위해
+
 import argparse
 import json
 import re
@@ -33,13 +38,13 @@ from pydantic import BaseModel, Field
 
 from chunk_transcripts import video_parts
 from compare_prompt_v3 import DEDUPE_PROMPT, WINDOW_RULES, DedupeOut, key_of, same_item, user_message, windows_of
-from extract_chef_info import chefs_for_store
+from common import chefs_for_store
 from extract_script_notes import PRICE_PER_M, TIME_RULES, ScriptNotes, client, fix_times, hms_to_sec, load_stores
 from extract_script_v7 import V7Menu, apply_dedupe, clean_texts, fmt_items, resolve_names, strip_generic, tidy_items, verify_texts
 from extract_transcript_notes import Drink
 from get_transcripts_since import OUTPUT_DIR as TRANSCRIPT_DIR, format_timestamp
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 TAG = "gpt-4o-mini-script-course"
 MODEL = "gpt-4o-mini"
 OUTPUT_DIR = ROOT / "data" / "video_notes" / TAG

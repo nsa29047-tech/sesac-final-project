@@ -43,7 +43,7 @@ from typing import List, Optional, Dict, Any, Tuple
 import requests
 import yt_dlp
 from video_meta_cache import get_video_meta
-from fetch_price_level import FIELDNAMES as PRICE_FIELDS, OUTPUT_FILE as PRICES_FILE, price_fields
+from enrich_places_details import PRICE_FIELDS, PRICES_FILE, price_fields
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from openai import OpenAI
@@ -477,7 +477,7 @@ def places_text_search(query: str, country_code: str) -> List[Dict[str, Any]]:
             "places.regularOpeningHours,"
             # 가격대용. Text Search 가 이미 Enterprise 등급이라 추가 비용 없이 같이 받는다.
             # 지역(addressComponents)은 여기서 받지 않는다: 이 검색은 languageCode 가 없어 영문 지명이 오는데
-            # (공식명 비교 때문에 바꿀 수 없음) 지역은 한국어(languageCode=ko)가 필요해 enrich_regions.py 가 Details 로 받는다.
+            # (공식명 비교 때문에 바꿀 수 없음) 지역은 한국어(languageCode=ko)가 필요해 enrich_places_details.py 가 Details 로 받는다.
             "places.priceLevel,places.priceRange"
             # 아래는 Enterprise+Atmosphere 등급이라 비용이 더 나가는 필드들. 필요하면 주석 해제.
             # ",places.servesVegetarianFood,places.takeout,places.delivery,places.dineIn,"
@@ -974,7 +974,7 @@ def process_video(url: str, v_idx: int, total: int) -> Optional[List[Dict[str, A
 class PriceWriter:
     """Text Search 로 함께 받은 가격대를 restaurant_prices_sample.csv 에 건별로 덧붙인다.
 
-    fetch_price_level.py 와 같은 컬럼이라 load_prices.py 를 그대로 쓴다. 이미 기록된 google_place_id 는 다시 쓰지 않는다.
+    enrich_places_details.py 와 같은 컬럼이라 load_prices.py 를 그대로 쓴다. 이미 기록된 google_place_id 는 다시 쓰지 않는다.
     --output 이 기본 경로가 아니면 같은 위치에 `<이름>_prices.csv` 로 쓴다(테스트 실행이 실제 파일을 건드리지 않게).
     """
 

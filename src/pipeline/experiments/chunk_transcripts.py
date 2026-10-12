@@ -12,6 +12,11 @@
   uv run python src/pipeline/chunk_transcripts.py --dry-run        # 청크 통계만(임베딩·저장 없음, 경계 호출은 함)
   uv run python src/pipeline/chunk_transcripts.py --query "트러플 파스타" --top 5 [--country KR]
 """
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))  # experiments/ 밖의 pipeline 모듈(get_transcripts_since 등)을 import 하기 위해
+
 import argparse
 import csv
 import json
@@ -26,7 +31,7 @@ from pydantic import BaseModel, Field
 from extract_script_notes import MODEL, client, hms_to_sec, load_stores
 from get_transcripts_since import OUTPUT_DIR as TRANSCRIPT_DIR, format_timestamp
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 OUT_DIR = ROOT / "data" / "transcript_chunks"
 BOUNDARY_DIR = OUT_DIR / "_boundaries"
 DESC_DIR = OUT_DIR / "_descriptions"  # 구간 나누기 힌트로 쓰는 영상 소개란(yt-dlp로 한 번만 받아 저장)

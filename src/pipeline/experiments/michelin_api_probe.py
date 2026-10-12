@@ -1,4 +1,9 @@
 """Parse의 guide.michelin.com API 호출 확인용 스크립트. 키는 환경변수 MICHELIN_GUIDE_API_KEY 에서 읽는다."""
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))  # experiments/ 밖의 pipeline 모듈(get_transcripts_since 등)을 import 하기 위해
+
 import os
 import sys
 

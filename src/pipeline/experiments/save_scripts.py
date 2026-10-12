@@ -14,6 +14,11 @@ transcripts/ 폴더에 "{순번}. {영상 제목}.txt" 형식으로 저장하는
   실제 자격증명으로 채워서 사용하세요.
 """
 
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))  # experiments/ 밖의 pipeline 모듈(get_transcripts_since 등)을 import 하기 위해
+
 import os
 import re
 import json
@@ -37,7 +42,7 @@ from youtube_transcript_api._errors import (
 from pathlib import Path
 
 # 프로젝트 루트(sesac-final-project/) 기준으로 경로를 잡는다. 실행 위치(cwd)와 무관하게 동작.
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = ROOT / "data"
 URLS_DIR = DATA_DIR / "urls"
 

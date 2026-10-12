@@ -1,5 +1,5 @@
 -- Google Places priceLevel / priceRange 컬럼 추가. 여러 번 실행해도 안전하다.
--- 채우기: uv run python src/db/load_prices.py (data/restaurant_prices_sample.csv, fetch_price_level.py 결과)
+-- 채우기: uv run python src/db/load_prices.py (data/restaurant_prices_sample.csv, enrich_places_details.py --prices 결과)
 BEGIN;
 ALTER TABLE restaurants
     ADD COLUMN IF NOT EXISTS price_level    SMALLINT CHECK (price_level BETWEEN 0 AND 4),

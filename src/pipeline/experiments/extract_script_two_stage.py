@@ -15,6 +15,11 @@ load_notes.py --model {폴더명} 으로 그대로 적재할 수 있다. 이미 
   uv run python src/pipeline/extract_script_two_stage.py --video-id 3vYwR8V8IaU --model gpt-4o   # 모델을 바꿔 시험
 """
 
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))  # experiments/ 밖의 pipeline 모듈(get_transcripts_since 등)을 import 하기 위해
+
 import argparse
 import json
 import re
@@ -28,7 +33,7 @@ from extract_script_notes import client, describe, load_stores
 from extract_transcript_notes import TranscriptNotes
 from get_transcripts_since import OUTPUT_DIR as TRANSCRIPT_DIR, format_timestamp
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 NOTES_DIR = ROOT / "data" / "video_notes"
 PRICES = {"gpt-4o-mini": (0.15, 0.60), "gpt-4o": (2.50, 10.00)}  # (입력, 출력) USD / 1M 토큰
 EXCERPT_PAD = 2        # 근거 구간 앞뒤로 더 보여 주는 줄 수

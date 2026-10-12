@@ -16,6 +16,11 @@
   uv run python src/pipeline/compare_prompt_v3.py --video-id 6vYMBhJOneU --report-only
 """
 
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))  # experiments/ 밖의 pipeline 모듈(get_transcripts_since 등)을 import 하기 위해
+
 import argparse
 import json
 import re
@@ -30,7 +35,7 @@ from extract_script_notes import MODEL, PRICE_PER_M, TIME_RULES, ScriptMenu, Scr
 from extract_transcript_notes import Drink
 from get_transcripts_since import OUTPUT_DIR as TRANSCRIPT_DIR, load_timed_transcript
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 NOTES_DIR = ROOT / "data" / "video_notes"
 COMPARE_DIR = ROOT / "data" / "compare"
 TAGS = {"v2": "gpt-4o-mini-script-v2", "v3": "gpt-4o-mini-script-v3", "v3w": "gpt-4o-mini-script-v3w",

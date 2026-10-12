@@ -226,3 +226,6 @@ parse_apis/src/parse_apis/*
 !parse_apis/src/parse_apis/__init__.py
 !parse_apis/src/parse_apis/py.typed
 .parse/
+
+# 발표 자료
+*.pptx

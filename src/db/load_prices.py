@@ -1,4 +1,4 @@
-"""fetch_price_level.py 결과 CSV -> restaurants.price_level / price_min / price_max / price_currency. 재실행해도 결과가 같다.
+"""enrich_places_details.py --prices 결과 CSV -> restaurants.price_level / price_min / price_max / price_currency. 재실행해도 결과가 같다.
 
 선행: migrate_price_columns.sql 적용. 값이 없는 식당은 NULL 로 덮어쓴다(CSV 에 있는 식당만 건드린다).
 사용: uv run python src/db/load_prices.py [--csv data/restaurant_prices_sample.csv]

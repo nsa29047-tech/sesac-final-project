@@ -15,6 +15,11 @@ load_notes.py --model gpt-4o-mini-script-v7 로 그대로 적재할 수 있다. 
   uv run python src/pipeline/extract_script_v7.py --video-id 3vYwR8V8IaU --video-id 6vYMBhJOneU
 """
 
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))  # experiments/ 밖의 pipeline 모듈(get_transcripts_since 등)을 import 하기 위해
+
 import argparse
 import json
 import re
@@ -30,7 +35,7 @@ from extract_script_notes import PRICE_PER_M, TIME_RULES, ScriptMenu, client, fi
 from extract_transcript_notes import Drink, TranscriptNotes
 from get_transcripts_since import OUTPUT_DIR as TRANSCRIPT_DIR, load_timed_transcript
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 TAG = "gpt-4o-mini-script-v7"
 OUTPUT_DIR = ROOT / "data" / "video_notes" / TAG
 

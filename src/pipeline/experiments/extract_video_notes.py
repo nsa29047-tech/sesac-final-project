@@ -15,6 +15,11 @@ extract_transcript_notes.py(자막 기반)와 같은 스키마(TranscriptNotes)�
   uv run python src/pipeline/extract_video_notes.py --stores-csv data/restaurants_info.csv --video-id 3vYwR8V8IaU
 """
 
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))  # experiments/ 밖의 pipeline 모듈(get_transcripts_since 등)을 import 하기 위해
+
 import argparse
 import csv
 import json
@@ -35,7 +40,7 @@ from extract_transcript_notes import Menu, TranscriptNotes
 
 load_dotenv()
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_STORES_CSV = ROOT / "data" / "restaurants_info.csv"
 OUTPUT_DIR = ROOT / "data" / "video_notes"
 DEFAULT_MODEL = "gemini-3.5-flash-lite"

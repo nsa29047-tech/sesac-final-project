@@ -16,6 +16,11 @@
   uv run python src/pipeline/extract_script_notes.py                    # 전체(이어서 처리)
 """
 
+import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))  # experiments/ 밖의 pipeline 모듈(get_transcripts_since 등)을 import 하기 위해
+
 import argparse
 import csv
 import json
@@ -36,7 +41,7 @@ from get_transcripts_since import OUTPUT_DIR as TRANSCRIPT_DIR, load_timed_trans
 
 load_dotenv()
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 STORES_CSV = ROOT / "data" / "restaurants_info.csv"
 # 대상 영상 ID 목록. 2024년 영상까지 넓힐 때는 환경변수 TARGETS_FILE=data/urls/transcript_targets_20240101.txt 로 바꾼다.
 TARGETS_FILE = Path(os.getenv("TARGETS_FILE") or ROOT / "data" / "urls" / "transcript_targets_20250101.txt")
