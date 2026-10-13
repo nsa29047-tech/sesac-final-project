@@ -32,7 +32,7 @@
 - `restaurants`: Places 정보(`name_ko`, `name_official`, `formatted_address`, `latitude`, `longitude`, `rating`, `rating_count`, `business_status`, `country_code`), 지역 `region_1~3`, 음식 분류 `category_broad/detail`(영상 분석 결과), 셰프 `chef_name`/`chef_info`, **가격** `price_level`(0 무료 ~ 4 매우 비쌈, 없으면 NULL)·`price_min`·`price_max`·`price_currency`.
 - `restaurant_hours`: 요일(0=일~6=토)별 영업 구간. 휴무는 시간이 NULL.
 - `michelin_status`: `is_michelin`, `latest_grade`(NONE/BIB_GOURMAND/1_STAR/2_STARS/3_STARS/SELECTED/UNKNOWN).
-- `menus`: `item_type`(FOOD/DRINK), `name`, **`description`**, `evidence`, `menu_order`(영상에서 나온 순서), `course_stage`(코스 식당의 음식만), `mentioned_sec`(자막에서 추정한 시각), `first_appearance_sec`. 맛 평가·팁·가격은 저장하지 않는다.
+- `menus`: `item_type`(FOOD/DRINK), `name`, **`description`**, `evidence`, `menu_order`(영상에서 나온 순서), `course_stage`(코스 식당의 음식만), `mentioned_sec`(영상에 나오는 시각. 영상 분석은 화면 첫 등장, 자막 분석은 자막에서 추정한 값). 맛 평가·팁·가격은 저장하지 않는다.
 - `video_restaurant_notes`: `concept`, `atmosphere`, `key_points`, `final_review`, `embedding_text`, **`is_course`**, **`course_name`**, 추출 원본 `raw`.
 - `restaurant_tags`: 음식 태그. `videos`, `video_restaurant_mentions`.
 - `restaurant_chunks`: `chunk_type`(OVERVIEW/FOOD/DRINK/CHEF), `chunk_key`('overview'/'chef'/메뉴명), `content`, `embedding`. FOOD/DRINK/CHEF 청크 content에는 식당 이름을 넣지 않는다(식당은 `restaurant_id`로 정한다).

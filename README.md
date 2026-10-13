@@ -22,7 +22,7 @@
 - Google Places API (New): 공식 상호명, 주소, 평점, 영업시간 등
 - Parse SDK (guide.michelin.com API): 미슐랭 현재 등급 판별 / Tavily Search: 폴백(`--michelin-fallback`) 전용
 - OpenAI `gpt-4o-mini`: 영상 자막(스크립트)에서 메뉴·분위기·태그·셰프 추출 (현재 사용)
-- Gemini API (Google AI Studio): 영상(시각·음성)을 직접 분석. **예정**: 자동 생성 자막 영상의 누락·오타를 보강할 때만 사용 (지금은 사용하지 않음)
+- Gemini API (Google AI Studio): 영상(시각·음성)을 직접 분석. 자동 생성 자막 영상(오타·누락이 많음)에만 사용(`extract_video_split.py`, 2026년 분 완료). 제작자 자막 영상은 자막 분석(gpt-4o-mini)
 - yt-dlp: 영상 메타데이터와 자막(스크립트) 수집 (Playwright, youtube-transcript-api는 쓰지 않음)
 - PostgreSQL (+ pgvector 선택)
 
@@ -43,11 +43,12 @@ sesac-final-project/
 │   │   ├── export_review_list.py       # 3-c. 사람이 확인할 식당(미슐랭 후보·매칭 실패·숙소)을 xlsx로 추출
 │   │   ├── enrich_places_details.py   # 4. Places Details 1회로 지역(시 > 구/군 > 동) 보강 + (--prices) 가격대 수집 -> data/restaurant_regions.csv, data/restaurant_prices_sample.csv. 예전 enrich_regions.py + fetch_price_level.py
 │   │   ├── extract_script_split.py     # 5''''. A/B 분리 추출(A 가게 정보 / B 메뉴·음료·코스 단계 + 코스 판단·셰프 호출), 건별 저장 -> data/video_notes/gpt-4o-mini-script-split-v2/ (2026년), -2025/ (2025년), -2024/ (2024년). 2024년 영상은 환경변수 TARGETS_FILE=data/urls/transcript_targets_20240101.txt 로 대상 목록을 바꿔 실행
+│   │   ├── extract_video_split.py      # 5-a'. 자동 생성 자막 영상용 Gemini 영상 분석(자막은 쓰지 않음). 자막 방식과 같은 필드·같은 JSON 구조로 저장, 결과 후처리는 postprocess_split.py --tag 로 같이 쓴다
 │   │   ├── postprocess_split.py        # 5-b. A/B 분리 결과 후처리(음식 분류 다시 정하기(예전 reclassify_split_cuisine.py), 평가어·가격 문장, 코스 단계 보정, 음료 중복, 식당 이름 셰프 제거), 원본은 *_raw 폴더에 백업
 │   │   ├── get_transcripts_since.py    # 자막 수집 (yt-dlp, 기본 2025-01-01 이후·적재 가능 영상만, --since 로 날짜 변경, 이어받기)
 │   │   └── experiments/                # 실험·보류·미사용 코드. 지금 파이프라인은 import 하지 않음(sys.path로 pipeline 모듈만 가져다 씀)
 │   │       ├── extract_script_notes.py / extract_script_course.py / extract_script_v7.py / extract_script_two_stage.py / compare_prompt_v3.py  # 자막 추출 프롬프트 실험(A/B 분리 이전 방식)
-│   │       ├── compare_extraction_methods.py / extract_video_notes.py  # video / 자막 / 하이브리드 비교, Gemini 영상 분석(보류, 자동 자막 보강용)
+│   │       ├── compare_extraction_methods.py / extract_video_notes.py  # video / 자막 / 하이브리드 비교, 예전 Gemini 영상 분석 실험(extract_video_split.py로 대체됨)
 │   │       ├── chunk_transcripts.py / extract_transcript_notes.py / check_course_gold.py  # 자막 원문 청킹 실험, 초기 스키마, 코스 점검표
 │   │       ├── extract_chef_info.py  # 셰프 단독 추출(예전 방식, data/chef_notes). 지금은 extract_script_split.py 가 추출 때 함께 뽑음
 │   │       └── probe_price.py / michelin_api_probe.py / save_scripts.py  # 가격대·Parse API 확인용, 옛 자막 수집
@@ -117,7 +118,9 @@ sesac-final-project/
    - 건마다 CSV에 즉시 기록해 중간에 중단되어도 결과가 보존되며, 완료 후 xlsx로 변환
    - `export_review_list.py`: 사람이 확인할 행(미슐랭 후보, Google 매칭 실패, 숙소로 매칭된 행)만 뽑아 xlsx로 저장합니다
 4. **지역·가격대 보강** (`enrich_places_details.py`, 가격대는 `--prices`일 때만): 3번 CSV의 `google_place_id`로 Places Details의 `addressComponents`에서 시 > 구/군 > 동·면(서울특별시 > 마포구 > 연남동, 성남시 > 분당구 > 정자동)을 뽑아 `data/restaurant_regions.csv`에 건별로 저장합니다. 없는 단계는 건너뛰고 있는 데까지만 저장하며(안동시는 시만, 도로명 주소라 동이 없으면 구까지), 도로명은 쓰지 않습니다. 식당당 Details 1회이고, 재실행하면 이어서 처리합니다. `--limit`으로 샘플을 먼저 검증하세요. "OO역/OO 근처" 질문은 지역 컬럼이 아니라 식당의 위경도로 반경 검색합니다(질문 시점에 지명의 좌표를 조회). DB 적재는 6번의 `load_regions.py`가 합니다.
-5. **자막 수집·분석**: `get_transcripts_since.py`(yt-dlp)로 제작자 한국어 자막(없으면 자동 생성 자막)을 구간별 시각과 함께 받고(`data/transcripts/{video_id}.json`), `extract_script_split.py`가 3번의 CSV를 가게 목록으로 삼아 자막만으로 가게 정보(A)와 메뉴·음료(B)를 나눠 추출합니다(`gpt-4o-mini`, 가게당 3~4회 호출). 한 영상에 가게가 여러 곳이면 가게별 자막 구간만 입력으로 줍니다. 이어서 `postprocess_split.py`(음식 분류 다시 정하기, 평가어·코스 단계 보정)를 거치고, 결과는 `data/video_notes/{tag}/{video_id}__{google_cid}.json`에 저장됩니다. Google 매칭에 실패한 가게는 건너뜁니다. 현재는 이 자막 분석만 쓰고, **추후 자동 생성 자막 영상(오타·누락이 많음)에 한해 Gemini 영상 분석(`extract_video_notes.py`)으로 보강할 계획**입니다. 제작자 자막 영상은 자막 분석으로 충분하다고 봅니다.
+5. **자막 수집·분석**: `get_transcripts_since.py`(yt-dlp)로 제작자 한국어 자막(없으면 자동 생성 자막)을 구간별 시각과 함께 받고(`data/transcripts/{video_id}.json`), `extract_script_split.py`가 3번의 CSV를 가게 목록으로 삼아 자막만으로 가게 정보(A)와 메뉴·음료(B)를 나눠 추출합니다(`gpt-4o-mini`, 가게당 3~4회 호출). 한 영상에 가게가 여러 곳이면 가게별 자막 구간만 입력으로 줍니다. 이어서 `postprocess_split.py`(음식 분류 다시 정하기, 평가어·코스 단계 보정)를 거치고, 결과는 `data/video_notes/{tag}/{video_id}__{google_cid}.json`에 저장됩니다. Google 매칭에 실패한 가게는 건너뜁니다. 제작자 자막 영상은 이 자막 분석을, **자동 생성 자막 영상(오타·누락이 많음)은 Gemini 영상 분석(`extract_video_split.py`, 자막은 쓰지 않음)을 씁니다.** 둘 다 같은 필드·JSON 구조를 만들어 후처리(`postprocess_split.py`)와 적재를 공유합니다. 2026년 자동 자막 영상은 처리했고 2025년 23개·2024년 11개가 남았습니다.
+   - **후처리(`postprocess_split.py`)가 하는 일과 이유**: 추출 호출은 다시 하지 않고 결과 JSON만 정리합니다. (1) 음식 분류 다시 정하기: 영상 제목·가게 이름·주소·국가·컨셉·나온 메뉴를 보고 분류 전용 호출(`common.classify_cuisine`)로 대분류·세부 분류(대표 하나)·태그를 다시 정하고 표기 통일·미슐랭 제외(`category_rules.finalize_cuisine`)를 거칩니다. 이전 값은 `cuisine_before`에 남깁니다. (2) 설명의 평가어·가격: 근거 없이 평가만 있는 문장은 규칙으로 지우고, 구체적인 내용과 섞인 문장은 LLM이 평가·가격만 빼고 다시 씁니다. (3) 코스 단계 보정: '치즈'가 이름에 있으면 치즈, 고기보다 앞에 나온 해산물 메인은 생선, 단계가 순서대로 줄어들지 않게 맞춥니다. (4) 음료와 이름이 같은 메뉴 제거. (5) 식당 이름이 들어간 셰프 제거. 원본은 `data/video_notes/{tag}_raw`에 한 번만 복사하고 항상 원본에서 읽어 쓰므로 다시 실행해도 결과가 같습니다(수동 수정도 원본 쪽에 합니다). 바뀐 내용은 결과의 `postprocess` 키에 남습니다. 실행: `TARGETS_FILE=<대상 ID 목록> uv run python src/pipeline/postprocess_split.py --tag $TAG`(`--dry-run`은 규칙만, `--skip-cuisine`은 분류 건너뜀).
+   - **왜 추출과 후처리를 나누는가**: 프롬프트에 같은 규칙(평가어 금지, 분류 기준, 코스 단계 순서, 음료는 메뉴 아님)이 들어 있어도 모델이 지키지 못하는 경우가 남습니다(영상 분석 테스트 4곳에서 분류 1곳, 코스 순서 2건, 평가어 3항목을 후처리가 고침). 순서 맞추기·음료 중복·셰프 이름 제거 같은 일은 규칙이라 코드가 항상 같은 결과를 내고 모델은 실행마다 달라집니다. 한 호출에 필드를 더하면 추출이 흔들렸고(과거 실험), 분류는 메뉴가 다 나온 뒤에 해야 정확합니다. 또 원본을 보존하므로 분류 표기나 평가어 규칙이 바뀌어도 영상 분석(Gemini, 하루 8시간 한도)을 다시 돌리지 않고 OpenAI 약 $0.01로 전체를 다시 정리할 수 있습니다. 추출 스크립트 끝에서 자동 실행하도록 합치는 것은 가능하나 아직 하지 않았습니다.
 6. **DB 적재**: `load_restaurants.py`(식당·영상·영업시간·미슐랭) → `load_regions.py`(`restaurants.region_1/2/3`) → `load_notes.py`(카테고리·태그·메뉴·노트) → `embed_chunks.py`(청크 임베딩). 모두 여러 번 실행해도 중복되지 않습니다.
 
 ## DB 스키마
@@ -132,7 +135,7 @@ sesac-final-project/
 | `restaurant_hours` | 요일별 영업시간 (하루 여러 구간, 자정 넘김 지원). 휴무는 `open_time`/`close_time`이 NULL인 행. |
 | `michelin_status` | 미슐랭 현재 상태 (현재 등재 여부, 등급, 확인 시각) |
 | `video_restaurant_mentions` | 영상 ↔ 식당 (N:M), LLM이 추출한 원본 이름·주소 보관 |
-| `menus` | 영상에서 추출한 메뉴/음료 (`description` 설명, 근거 `evidence`, 영상 속 순서 `menu_order`, 코스 단계 `course_stage`(참고용, 필터 금지), 자막 시각 `mentioned_sec`). 맛 평가·팁·가격은 저장하지 않음 |
+| `menus` | 영상에서 추출한 메뉴/음료 (`description` 설명, 근거 `evidence`, 영상 속 순서 `menu_order`, 코스 단계 `course_stage`(참고용, 필터 금지), 메뉴 시각 `mentioned_sec`(영상 분석은 화면 첫 등장, 자막 분석은 자막 시각 추정 — 한 칸으로 통합)). 맛 평가·팁·가격은 저장하지 않음 |
 | `restaurant_tags` | 음식 검색용 태그 (티본 스테이크, 스시 등) |
 | `video_restaurant_notes` | (영상, 식당)별 컨셉·분위기·총평·임베딩용 요약, 코스 식당 여부 `is_course`·코스 이름 `course_name`, 추출 원본 JSON |
 | `restaurant_chunks` | RAG 청크와 임베딩 (pgvector, `restaurant_chunks.sql`로 별도 생성). 종류: OVERVIEW(식당 개요) / FOOD / DRINK(메뉴별) / CHEF(셰프 이름·경력만 담은 짧은 청크) |
@@ -164,7 +167,7 @@ uv run parse add --marketplace guide-michelin-com-api
 | `GOOGLE_PLACES_API_KEY` | Places API (New). 없으면 구글 조회를 건너뜀 |
 | `MICHELIN_GUIDE_API_KEY` | Parse의 guide.michelin.com API 키. 미슐랭 현재 등급 판별에 사용(코드에서 `PARSE_API_KEY`로 옮겨 줌). 없으면 미슐랭 조회가 실패로 기록됨 |
 | `TAVILY_API_KEY` | 미슐랭 폴백 검색(`--michelin-fallback`)과 이력 근거 검색 |
-| `GEMINI_API_KEY` | Gemini API. 영상(시각·음성)을 직접 분석할 때 사용. 현재 파이프라인은 쓰지 않고, 자동 생성 자막 영상 보강 단계에서 쓸 예정 |
+| `GEMINI_API_KEY` | Gemini API. 자동 생성 자막 영상을 직접 분석할 때 사용(`extract_video_split.py`). 무료 등급은 YouTube 영상을 하루 8시간까지만 받는다 |
 | `POSTGRES_URI` | PostgreSQL 접속 문자열 |
 | `READONLY_POSTGRES_URI` | 읽기 전용 계정(`create_readonly_role.sql`) 접속 문자열. 챗봇(`src/chatbot`)과 `rag_search.py`가 원본 테이블 조회에 쓴다. 없으면 `POSTGRES_URI`로 접속하며 경고한다 |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT` | LangSmith 트레이싱 |
@@ -203,9 +206,9 @@ uv run python src/db/backup_tables.py --tables restaurants menus restaurant_tags
 uv run python src/db/load_notes.py --model $TAG
 uv run python src/db/load_chefs.py --notes-tag $TAG
 uv run python src/pipeline/fill_michelin.py --only-notes $TAG        # Parse 호출(하루 100회 한도, 결과는 CSV에 저장)
-uv run python src/db/load_restaurants.py data/restaurants_info.xlsx   # 미슐랭 결과를 DB에 반영
+uv run python src/db/load_restaurants.py data/restaurants_info.xlsx   # 미슐랭 결과를 DB에 반영(가격대도 data/restaurant_prices_sample.csv가 있으면 같이 반영, 새로 매칭한 식당은 Text Search가 가격대를 같이 받아 별도 조회 불필요)
 uv run python src/pipeline/enrich_places_details.py --prices --skip-regions --notes-tag $TAG      # (3번 이전에 매칭된 식당만) 가게 수만큼 Places Details 호출 (Enterprise SKU 필드, 호출당 약 $0.02)
-uv run python src/db/load_prices.py
+uv run python src/db/load_prices.py                                 # Details로 따로 받은 가격대 반영(load_restaurants.py도 같은 CSV를 반영하므로 보통 불필요)
 uv run python src/db/embed_chunks.py
 uv run python src/db/test_rag.py                                      # 검색 확인
 ```
@@ -239,18 +242,20 @@ uv run langgraph dev
 - [x] CHEF 청크: 셰프 경력 질문 순위 개선("흑백요리사에 나온 셰프" 질문에서 팔선 8위 -> 1위)
 - [x] 검색 모듈 `rag_search.py`: LLM이 질문 충족 여부를 판단해 맞는 결과가 없으면 "없음", 홍콩처럼 음식 스타일로 쓰이는 지명은 country_code가 아니라 카테고리·태그로 판단
 - [x] 조회 범위 뷰 `*_in_scope`(현재 120곳)와 챗봇 전용 계정 스크립트 `create_chatbot_role.sql`: 만들어 두었으나 챗봇은 10/13부터 쓰지 않고 원본 테이블을 읽기 전용 계정으로 조회
-- [ ] 자동 생성 자막 영상(약 72개)에 한해 Gemini 영상 분석으로 보강 (`extract_video_notes.py`, 샘플 검증 후 진행)
+- [x] 자동 생성 자막 영상 Gemini 영상 분석(10/13): 2026년 자동 자막 영상 중 CSV에 Google 매칭 식당이 있는 30개 영상의 43곳을 `extract_video_split.py`로 추출·후처리·적재했습니다(태그 `gemini-3.5-flash-lite-split-v1`, 자막은 쓰지 않음, 입력 약 298만+검증 3개 영상 토큰, 영상 535분+검증 49분). 자막 방식(A/B 분리)과 같은 필드·같은 JSON 구조라 `postprocess_split.py --tag`, `load_notes.py --model`, `embed_chunks.py`, `load_chefs.py --notes-tag`를 그대로 썼습니다. 셰프도 같은 호출에서 영상으로 뽑고(확신도는 제목·소개란에 이름이 있으면 high, 아니면 medium) 밑반찬은 메뉴가 아니라 key_points에 넣으며 메뉴가 0개인 가게는 제외합니다(`_excluded`). 메뉴 시각은 `menus.mentioned_sec` 하나로 통합했습니다(`migrate_merge_menu_time.sql` 적용 완료, `first_appearance_sec` 삭제). 사용자 확인으로 제외한 3곳(MASSIMO MORDI e FUGGI·카페 길리·Perché no!)은 CSV/xlsx(백업 `restaurants_info_before_exclude_3stores.csv`)와 DB에서 지웠고, 포항물횟집·이방인횟집은 기타/해산물로 수동 통일했습니다. 적재 결과(DB 전체): 노트 164, 메뉴 음식 1,173·음료 272, 청크 OVERVIEW 164·FOOD 1,011·DRINK 190·CHEF 47, 이 43곳 중 셰프 13곳·가격대 32곳(Google에 값 없는 곳 제외)·미슐랭 전부 조회, 조회 범위 뷰 159곳. 한계: 메뉴 환각·누락을 전수 검증하지 못했고(메뉴 2개 이하 5곳은 확인해 큰 누락 없음), 은해갈치 왕특대조림은 영상 분석에서 빠지고 찌개와 시각이 뒤바뀌어 있어 해당 구간만 Gemini에 다시 질의해 고쳤고(조림 08:35, 찌개 09:44), 체리 가든 셰프 '페이'는 사용자가 맞다고 확인했으며, 후처리 분류에는 대분류-세부 분류 일관성 검사가 없습니다(포항물횟집이 중식/해산물로 나온 사례). 남은 자동 자막 영상은 2025년 23개·2024년 11개이고 아직 처리하지 않았습니다.
+- [x] 챗봇 평가셋 재측정(10/13, 영상 분석 43곳 적재 후, `--no-geo`): 42/43(98%). 실패 `taste-french-fine`(프랑스 파인다이닝에 스테이크하우스·이탈리안이 섞임)은 실행마다 달라지는 편차(4번 중 2번 실패)이고, `none-jokbal`은 띵하우에 '족발' 태그가 생겨 낡은 케이스가 됐습니다(교체 필요).
+- [ ] 남은 자동 생성 자막 영상(2025년 23개·2024년 11개) Gemini 영상 분석 (건수·비용 안내 후 샘플부터)
 - [x] LangGraph 챗봇 1차 구현(10/13): gpt-4o-mini ReAct 에이전트 + 도구 4개(SQL 필터, SQL 후 벡터 검색, 식당 상세, 좌표 조회). `uv run python src/chatbot/cli.py --trace "질문"` 또는 `uv run langgraph dev`. 질문 8개로 수동 확인했고 자동 평가셋·대화 기억 검증은 아직 없음
 - [x] 챗봇 평가셋(10/13): `src/chatbot/eval/` 41문항(정형 SQL 19·취향 RAG 12·없는 음식 5·식당 조회 3·잡담 2). 정답은 DB에서 SQL로 계산하고 도구 선택·결과 정확도·근거 없는 식당 언급을 점검한다. `uv run python src/chatbot/eval/run_eval.py [--ids ...] [--kind taste]`, 결과는 `data/eval/`. 첫 실행 51% -> 라우터·도구 강제 호출·국가 추측 금지·`city` 자동 좌표 조회·청크 종류별 후보·판단 프롬프트 보강으로 41/41(3회 연속, 고친 질문으로 잰 점수)
 - [x] Streamlit 챗봇 UI(10/13): `uv run streamlit run src/streamlit_app.py`. 토큰 단위 스트리밍, 도구 호출 진행 표시, 대화 기억(thread_id), 예시 질문·새 대화 버튼. 추천 식당은 맛집 앱 스타일 카드로 표시(영상 썸네일, 미슐랭 배지, 평점·가격대, 셰프, 영상·지도 버튼, 검색에 걸린 메뉴 설명). 카드는 LLM 글이 아니라 도구 결과(JSON)로 그리고(`src/chatbot/cards.py`), 그래프는 `build_graph(cards=True)`로 본문을 요약·추천 이유만 쓰게 한다. 테마는 `.streamlit/config.toml`
+- [x] 추천 결과 지도(10/13): 카드 위에 번호 마커 지도(Leaflet + OpenStreetMap, `src/chatbot/maps.py`), 마커 말풍선에 이름·평점·미슐랭·영상/지도 링크. 상세 팝업에도 그 식당 위치 지도
 - [x] 식당 상세 팝업(10/13): 카드의 "상세 정보 보기"를 누르면 `st.dialog`로 한 식당의 정보를 한눈에 보여 준다(`src/chatbot/detail.py` + `streamlit_app.py`). 영상 속 메뉴 타임라인(앱 안에서 유튜브 영상을 바로 재생하고, 메뉴를 누르면 그 시각으로 이동해 재생하며 재생 중인 메뉴를 강조. 유튜브 IFrame API를 `components.html`로 임베드, 임베드가 막힌 영상은 "YouTube에서 보기" 링크로 대체. 코스 단계·조리 특징 설명), 영상 소개(컨셉·분위기·키포인트·총평), 음료, 기본 정보(주소·전화·가격·영업시간·웹사이트·지도). 메뉴별 맛 후기는 저장하지 않아 조리 특징만 보여 준다
 - [ ] n8n 자동화
 
 ## 알려진 이슈 / TODO
 
-- [x] 추천 결과 지도(10/13): 카드 위에 번호 마커 지도(Leaflet + OpenStreetMap, `src/chatbot/maps.py`), 마커 말풍선에 이름·평점·미슐랭·영상/지도 링크. 상세 팝업에도 그 식당 위치 지도
 - 자막 수집은 `get_transcripts_since.py`만 씁니다. 기존 Playwright 방식(`get_transcripts.py`)은 YouTube가 자막 패널 구조를 바꾸고 제작자가 영어 자막만 올린 영상은 패널이 영어로 열려서 삭제했습니다. `save_scripts.py`는 쓰지 않으며, `extract_transcript_notes.py`는 `extract_video_notes.py`가 `TranscriptNotes` 스키마를 import해서 남겨 둡니다.
-- 추출 방식은 **자막 분석(스크립트)으로 정했습니다.** 초기에 영상 / 자막 / 하이브리드를 비교했고(5개 영상 10곳, `data/compare/report.md`) 영상 분석은 조리 특징·가격이 더 낫지만 비용과 시간이 커서, 지금은 모든 영상을 자막으로 처리합니다. 자동 생성 자막(약 72개 영상)은 고유명사 오타와 메뉴 누락이 많아서 **추후 이 영상들에 한해 Gemini 영상 분석으로 보강할 계획**입니다(건수·비용 안내 후 샘플부터). 정답 기준이 없어 환각·누락은 아직 판단하지 못했습니다.
+- 추출 방식은 **자막 분석(스크립트)으로 정했습니다.** 초기에 영상 / 자막 / 하이브리드를 비교했고(5개 영상 10곳, `data/compare/report.md`) 영상 분석은 조리 특징·가격이 더 낫지만 비용과 시간이 커서, 지금은 제작자 자막 영상을 자막으로 처리합니다. 자동 생성 자막은 고유명사 오타와 메뉴 누락이 많아서 **이 영상들에 한해 Gemini 영상 분석(`extract_video_split.py`)을 씁니다**(2026년 분 완료, 2025·2024년 34개 남음). 정답 기준이 없어 환각·누락은 아직 판단하지 못했습니다.
 - 자막 수집 대상은 `data/urls/transcript_targets_20250101.txt`(121개)입니다. 1단계 필터(소개란에 '가게'/'장소')는 이 채널 소개란 템플릿 때문에 호텔 후기도 통과시켜서, 가게와 `google_cid`가 없는 영상 14개는 `transcript_excluded_20250101.txt`로 뺐습니다. 그중 `G4gG5SqhfE8`(홍콩 광둥요리 2곳 비교)와 CSV에 행이 없는 9개 영상은 가게 추출이 빠진 것일 수 있어 확인이 필요합니다.
 - 지역 매핑: `locality`가 구 단위인 나라(예: 일본 도쿄)는 "시" 자리에 구가 들어갑니다. 규칙을 바꾸면 Details를 다시 호출해 재생성합니다(식당당 1회, 223곳이면 약 3분). 원본 `addressComponents`는 용량 때문에 저장하지 않습니다. 해외 지역명은 Google이 한국어 이름을 주지 않아 영문·현지 표기(Paris, Sapporo, Bei Jing Shi 등)로 저장되고, 한국어 번역 컬럼은 만들지 않습니다(LLM 번역에 오류가 많았음). 해외 지명 질문("파리", "삿포로")은 챗봇이 질문 시점에 Places로 좌표를 조회해 반경 검색으로 처리합니다. 근처 역 정보는 저장하지 않으며, 좌표 반경 검색으로 대신합니다.
 - 미슐랭: 판별은 Parse API가 기본입니다. 이름과 도시가 일치하는 후보만 채택하고 등급은 API의 `distinction`을 씁니다. 기존 Tavily 방식은 이름만 검색해 다른 도시 지점이 섞였고 실행마다 결과가 달라 `--michelin-fallback`일 때만 씁니다. API 결과가 없으면 `NONE`이라 이름 표기가 달라 놓치는 경우(특히 한국어 상호)가 있을 수 있습니다. `source_urls`는 사람이 검증할 때만 쓰므로 CSV/xlsx에만 남기고 DB에는 적재하지 않습니다. 판정은 `michelin_status`를 기준으로 합니다.

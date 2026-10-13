@@ -49,7 +49,7 @@
 - `restaurants`: `restaurant_id`, `google_cid`, `name_ko`, `name_official`, `country_code`, `region_1~3`, `formatted_address`, `latitude`, `longitude`, `rating`, `rating_count`, `business_status`, `phone`, `website`, `google_maps_url`, `category_broad`(양식/한식/중식/일식), `category_detail`, `chef_name`, `chef_info`, `price_level`, `price_min`, `price_max`, `price_currency`
 - `restaurant_hours`: `restaurant_id`, `day_of_week`(0=일~6=토), `seq`, `open_time`, `close_time`
 - `michelin_status`: `restaurant_id`, `is_michelin`, `latest_grade`
-- `menus`: `restaurant_id`, `video_id`, `item_type`(FOOD/DRINK), `name`, `description`, `evidence`, `menu_order`, `course_stage`, `mentioned_sec`(자막에서 추정한 시각), `first_appearance_sec`
+- `menus`: `restaurant_id`, `video_id`, `item_type`(FOOD/DRINK), `name`, `description`, `evidence`, `menu_order`, `course_stage`, `mentioned_sec`(영상에 나오는 시각. 영상 분석은 화면 첫 등장, 자막 분석은 자막에서 추정한 값)
 - `video_restaurant_notes`: `video_id`, `restaurant_id`, `concept`, `atmosphere`, `key_points`(JSON 배열), `final_review`, `is_course`, `course_name`
 - `restaurant_tags`: `restaurant_id`, `tag`
 - `videos`: `video_id`, `url`, `title` (답변에 영상 링크를 붙일 때: `url`, 메뉴 시각은 `url`에 `&t=초`)
