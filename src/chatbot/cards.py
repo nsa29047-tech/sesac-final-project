@@ -11,6 +11,7 @@ CSS = """
 .rc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin:10px 0 4px}
 .rc{background:#fff;border:1px solid #eee;border-radius:16px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06);display:flex;flex-direction:column}
 .rc-img{height:128px;background:linear-gradient(135deg,#ffb199,#ff6a3c);background-size:cover;background-position:center;position:relative}
+.rc-num{position:absolute;right:10px;top:10px;width:26px;height:26px;border-radius:50%;background:#ff5a3c;color:#fff;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3)}
 .rc-badge{position:absolute;left:10px;top:10px;background:#fff;color:#d42a1b;font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px;box-shadow:0 1px 4px rgba(0,0,0,.2)}
 .rc-body{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;flex:1}
 .rc-name{font-size:16px;font-weight:700;color:#222;line-height:1.3}
@@ -68,7 +69,7 @@ def first_video(videos):
     return None, None
 
 
-def card_html(r: dict) -> str:
+def card_html(r: dict, num=None) -> str:
     video_url, vid = first_video(r.get("videos"))
     img_style = f"background-image:url('https://img.youtube.com/vi/{vid}/mqdefault.jpg')" if vid else ""
     michelin = r.get("michelin") or ""
@@ -109,7 +110,7 @@ def card_html(r: dict) -> str:
     if r.get("google_maps_url"):
         links.append(f'<a href="{esc(r["google_maps_url"])}" target="_blank">지도</a>')
 
-    return (f'<div class="rc"><div class="rc-img" style="{img_style}">{badge}</div><div class="rc-body">'
+    return (f'<div class="rc"><div class="rc-img" style="{img_style}">{badge}{f'<div class="rc-num">{num}</div>' if num else ""}</div><div class="rc-body">'
             f'<div class="rc-name">{esc(r.get("name") or r.get("name_official"))}</div><div class="rc-sub">{esc(sub)}</div>'
             f'<div class="rc-meta">{"".join(meta)}</div>{chips_html}{quote}<div class="rc-links">{"".join(links)}</div></div></div>')
 

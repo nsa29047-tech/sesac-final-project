@@ -19,6 +19,7 @@ from langgraph.checkpoint.memory import MemorySaver  # noqa: E402
 from chatbot.cards import CSS, card_html, collect, esc, pick, strip_links  # noqa: E402
 from chatbot.detail import DETAIL_CSS, TL_CSS, drinks_html, fetch_detail, info_html, intro_html, player_html, section  # noqa: E402
 from chatbot.graph import build_graph  # noqa: E402
+from chatbot.maps import map_html  # noqa: E402
 
 EXAMPLES = [
     "서울에 있는 미슐랭 스타 식당 알려줘",
@@ -144,6 +145,9 @@ def render_detail(d: dict):
     left, right = st.columns(2)
     left.markdown(info, unsafe_allow_html=True)
     right.markdown(hrs, unsafe_allow_html=True)
+    place = map_html([d])
+    if place:
+        components.html(place, height=260)   # 이 식당 위치
 
 
 def show_detail(restaurant_id: int, name: str):
@@ -159,12 +163,15 @@ def show_detail(restaurant_id: int, name: str):
 
 
 def render_cards(cards: list, idx: int):
-    """카드를 2열로 보여 주고, 카드마다 상세 정보 보기 버튼을 둔다. idx는 대화 기록에서의 메시지 번호(버튼 key 구분용)."""
+    """지도(번호 마커)와 카드를 보여 준다. 카드는 2열이고 카드마다 상세 정보 보기 버튼이 있다. idx는 대화 기록에서의 메시지 번호(버튼 key 구분용)."""
+    html = map_html(cards)
+    if html:
+        components.html(html, height=340)   # 카드 번호와 같은 번호의 마커
     for row in range(0, len(cards), 2):
         cols = st.columns(2)
-        for col, r in zip(cols, cards[row:row + 2]):
+        for k, (col, r) in enumerate(zip(cols, cards[row:row + 2])):
             with col:
-                st.markdown(CSS.replace("\n", "") + card_html(r), unsafe_allow_html=True)
+                st.markdown(CSS.replace("\n", "") + card_html(r, row + k + 1), unsafe_allow_html=True)
                 if st.button("상세 정보 보기", key=f"detail-{idx}-{r['restaurant_id']}", use_container_width=True):
                     show_detail(r["restaurant_id"], r.get("name") or r.get("name_official"))
 

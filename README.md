@@ -248,6 +248,7 @@ uv run langgraph dev
 
 ## 알려진 이슈 / TODO
 
+- [x] 추천 결과 지도(10/13): 카드 위에 번호 마커 지도(Leaflet + OpenStreetMap, `src/chatbot/maps.py`), 마커 말풍선에 이름·평점·미슐랭·영상/지도 링크. 상세 팝업에도 그 식당 위치 지도
 - 자막 수집은 `get_transcripts_since.py`만 씁니다. 기존 Playwright 방식(`get_transcripts.py`)은 YouTube가 자막 패널 구조를 바꾸고 제작자가 영어 자막만 올린 영상은 패널이 영어로 열려서 삭제했습니다. `save_scripts.py`는 쓰지 않으며, `extract_transcript_notes.py`는 `extract_video_notes.py`가 `TranscriptNotes` 스키마를 import해서 남겨 둡니다.
 - 추출 방식은 **자막 분석(스크립트)으로 정했습니다.** 초기에 영상 / 자막 / 하이브리드를 비교했고(5개 영상 10곳, `data/compare/report.md`) 영상 분석은 조리 특징·가격이 더 낫지만 비용과 시간이 커서, 지금은 모든 영상을 자막으로 처리합니다. 자동 생성 자막(약 72개 영상)은 고유명사 오타와 메뉴 누락이 많아서 **추후 이 영상들에 한해 Gemini 영상 분석으로 보강할 계획**입니다(건수·비용 안내 후 샘플부터). 정답 기준이 없어 환각·누락은 아직 판단하지 못했습니다.
 - 자막 수집 대상은 `data/urls/transcript_targets_20250101.txt`(121개)입니다. 1단계 필터(소개란에 '가게'/'장소')는 이 채널 소개란 템플릿 때문에 호텔 후기도 통과시켜서, 가게와 `google_cid`가 없는 영상 14개는 `transcript_excluded_20250101.txt`로 뺐습니다. 그중 `G4gG5SqhfE8`(홍콩 광둥요리 2곳 비교)와 CSV에 행이 없는 9개 영상은 가게 추출이 빠진 것일 수 있어 확인이 필요합니다.

@@ -125,7 +125,7 @@ def summarize(ids: List[int]):
         SELECT r.restaurant_id, COALESCE(r.name_ko, r.name_official) AS name, r.name_official, r.country_code,
                concat_ws(' > ', r.region_1, r.region_2, r.region_3) AS region, r.formatted_address AS address,
                r.category_broad, r.category_detail, r.price_level, r.price_min, r.price_max, r.price_currency,
-               r.rating, r.rating_count, r.business_status, r.chef_name, r.google_maps_url,
+               r.rating, r.rating_count, r.business_status, r.chef_name, r.google_maps_url, r.latitude, r.longitude,
                m.latest_grade AS michelin_grade,
                (SELECT array_to_string((array_agg(t.tag ORDER BY t.tag))[1:8], ', ') FROM restaurant_tags t WHERE t.restaurant_id = r.restaurant_id) AS tags,
                (SELECT string_agg(DISTINCT v.title || ' ' || v.url, ' | ')
