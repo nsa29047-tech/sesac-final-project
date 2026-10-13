@@ -66,9 +66,9 @@ class StoreInfo(BaseModel):
     location_hint: Optional[str] = Field(None, description="자막에 언급된 동네, 랜드마크 등")
     concept: Optional[str] = Field(None, description="식당 종류/컨셉 (예: 클래식 비스트로, 짬뽕 전문점)")
     category_broad: Literal["한식", "일식", "중식", "양식", "동남아식", "인도식", "중동식", "기타"] = Field(
-        "기타", description="음식 대분류. 양식은 유럽·아메리카 요리 전체. 근거가 없으면 기타"
+        "기타", description="음식 대분류. 양식은 유럽·아메리카 요리 전체. 해산물 전문점처럼 나라로 나눌 수 없으면 기타"
     )
-    category_detail: Optional[str] = Field(None, description="세부 음식 카테고리를 짧은 구로 (예: 프랑스 가정식, 완탕면, 파인다이닝)")
+    category_detail: Optional[str] = Field(None, description="세부 음식 카테고리를 딱 하나, 짧은 구로 (예: 프랑스 가정식, 완탕면, 파인다이닝). 쉼표로 여러 개를 쓰지 않는다. 나머지는 cuisine_tags에 적는다")
     cuisine_tags: List[str] = Field(default_factory=list, description="음식·조리 키워드 3~5개. 술, 와인, 재료 일반명 제외")
     atmosphere: Optional[str] = Field(None, description="공간, 좌석, 뷰, 손님층, 서비스, 주문·운영 방식 1~2문장")
     key_points: List[str] = Field(default_factory=list, description="이 식당만의 차별점, 방문 팁(예약, 웨이팅, 결제, 언어)")
@@ -129,7 +129,7 @@ PROMPT_A = (
   한식=한국 요리 / 일식=일본 요리(스시, 라멘, 이자카야 등) / 중식=중국·홍콩·대만 요리(광둥, 딤섬, 완탕면 등)
   양식=유럽·아메리카 요리 전체(프랑스, 이탈리아, 스페인, 스테이크, 비스트로 등) / 동남아식 / 인도식 / 중동식 / 기타
   파리·밀라노 등 유럽 도시의 식당이나 파스타·스테이크·와인이 중심이면 양식이다. 홍콩 식당이면서 광둥 요리면 중식이다.
-- category_detail은 식당 소개와 나온 요리로 판단 가능하면 반드시 짧은 구로 채운다. 정말 알 수 없을 때만 null.
+- category_detail은 식당 소개와 나온 요리로 판단 가능하면 반드시 짧은 구 하나로 채운다(쉼표로 여러 개 쓰지 않는다. 다른 요리는 cuisine_tags에). 미슐랭 등급은 쓰지 않는다. 정말 알 수 없을 때만 null.
 - cuisine_tags는 자막에 나온 요리·조리 키워드로 3~5개를 채운다.
 - atmosphere는 자막에서 언급된 공간, 좌석, 뷰, 손님층, 서비스, 주문·운영 방식을 1~2문장으로 요약한다. 언급이 전혀 없을 때만 null.
 - key_points는 이 식당만의 차별점과 방문 팁이다. final_review는 유튜버가 마무리에서 한 평가를 요약한다.

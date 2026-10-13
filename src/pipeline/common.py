@@ -14,6 +14,7 @@ import csv
 import json
 import os
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
@@ -22,6 +23,8 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "db"))   # category_rules (분류 표기 목록·정리 규칙)
+from category_rules import VOCAB  # noqa: E402
 from get_transcripts_since import OUTPUT_DIR as TRANSCRIPT_DIR, format_timestamp
 
 load_dotenv()
@@ -354,7 +357,7 @@ def detect_course(lines: List[dict], store: dict, usage: dict) -> Optional[dict]
 
 class Cuisine(BaseModel):
     broad: Literal["한식", "일식", "중식", "양식", "동남아식", "인도식", "중동식", "기타"] = Field(description="이 식당이 내는 음식의 대분류")
-    detail: Optional[str] = Field(None, description="세부 분류를 짧은 구로. 근거가 부족하면 null")
+    detail: Optional[str] = Field(None, description="세부 분류를 딱 하나, 짧은 구로(쉼표로 여러 개 쓰지 않는다. 미슐랭 등급은 쓰지 않는다). 근거가 부족하면 null")
     tags: List[str] = Field(default_factory=list, description="대표 음식 키워드 최대 5개. 술·와인·재료 일반명은 넣지 않는다")
 
 
@@ -362,8 +365,15 @@ CUISINE_PROMPT = """너는 식당이 내는 음식의 종류를 분류하는 편
 - broad: 식당이 있는 나라가 아니라 식당이 내는 음식으로 정한다. 한식, 일식, 중식, 양식(프랑스·이탈리아·스페인 등 유럽과 아메리카 요리 전체, 스테이크 포함), 동남아식, 인도식, 중동식, 기타 중에서 고른다.
   나라만 보고 정하지 않는다. 식당 컨셉·소개에 나온 말(예: "모던 ○○", "○○ 가정식")이 가장 중요한 근거이고, 그 다음이 영상 제목과 메뉴의 재료·조리법이다.
   재료나 조리법이 그 나라 음식이면(예: 장·젓갈·전·만두를 다른 식재료와 섞어 낸 현대적인 요리) 그 나라 음식으로 본다.
-- detail: 음식 종류와 형태를 담은 짧은 구(예: 오마카세, 삼겹살, 라멘, 스테이크, 비스트로, 딤섬, 타파스 바). 메뉴 이름과 제목에서 근거가 보일 때만 쓰고 부족하면 null이다.
-- tags: 대표 요리 키워드를 최대 5개."""
+  어느 큰 분류에도 맞지 않으면(해산물 전문점, 베이커리 등) 무리하게 끼워 넣지 말고 기타로 한다. '기타'는 '그 밖의 음식'이 아니라 나라로 나눌 수 없는 식당이다.
+- detail: 이 식당을 대표하는 세부 분류를 딱 하나만 짧은 명사구로 쓴다. 쉼표로 여러 개를 쓰지 않는다. 음식의 나라·종류가 보이면 그것을 대표로 하고 형태(파인다이닝, 코스 요리, 레스토랑)는 음식 종류를 알 수 없을 때만 쓴다.
+  검색이 되려면 표기가 같아야 하므로 아래 예시에 맞는 말이 있으면 그 표기를 그대로 쓴다(프랑스 요리·프렌치 레스토랑은 '프렌치', 이탈리아 요리는 '이탈리안'). 맞는 게 없을 때만 짧은 일반 명사 하나로 쓴다. 타파스를 주로 내는 바는 '스페인 요리'가 아니라 '타파스 바'로 한다.
+  '시그니처 요리' 같은 분류가 아닌 말은 쓰지 않는다. 근거가 부족하면 null이다.
+- tags: 대표로 고르지 않은 다른 후보와 대표 음식·형태 키워드를 최대 5개. 술·와인·재료 일반명은 넣지 않는다.
+- 미슐랭·미쉐린·별 개수 같은 말은 detail에도 tags에도 쓰지 않는다(미슐랭은 따로 관리한다).
+
+세부 분류 예시(대분류별):
+""" + VOCAB
 
 
 def classify_cuisine(store: dict, merged: dict, usage: dict) -> dict:

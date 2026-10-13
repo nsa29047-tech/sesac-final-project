@@ -35,6 +35,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from common import MODEL, classify_cuisine, client, key_of, load_stores
+from category_rules import finalize_cuisine  # common.py 가 src/db 를 sys.path 에 넣으므로 common 다음에 import 한다
 
 ROOT = Path(__file__).resolve().parents[2]
 TAG = "gpt-4o-mini-script-split-v2"
@@ -166,7 +167,8 @@ def reclassify_cuisine(note: dict, store: Optional[dict], usage: dict) -> Option
     result = classify_cuisine(store, note, usage)
     before = {k: note.get(k) for k in CUISINE_FIELDS}
     note["cuisine_before"] = before
-    note["category_broad"], note["category_detail"], note["cuisine_tags"] = result["broad"], result["detail"], result["tags"]
+    # 대표 하나·표기 통일·미슐랭 제외 (category_rules.finalize_cuisine)
+    note["category_broad"], note["category_detail"], note["cuisine_tags"] = finalize_cuisine(result["broad"], result["detail"], result["tags"])
     if before["category_broad"] != result["broad"]:
         print(f"[분류 변경] {note['video_id']} / {note['korean_name']}: {before['category_broad']}/{before['category_detail']} -> {result['broad']}/{result['detail']}")
         return True

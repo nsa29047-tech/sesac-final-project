@@ -145,9 +145,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ids", nargs="*")
     ap.add_argument("--kind")
+    ap.add_argument("--no-geo", action="store_true", help="지명 좌표 조회(Places)가 필요한 케이스는 건너뛴다. Places 일일 한도(100회) 보호용")
     ap.add_argument("--workers", type=int, default=4)
     a = ap.parse_args()
-    cases = [c for c in CASES if (not a.ids or c["id"] in a.ids) and (not a.kind or c["kind"] == a.kind)]
+    cases = [c for c in CASES if (not a.ids or c["id"] in a.ids) and (not a.kind or c["kind"] == a.kind) and not (a.no_geo and c.get("geo"))]
     app = build_graph(MemorySaver())
     names = all_names()
     print(f"{len(cases)}개 케이스 실행 (워커 {a.workers})")

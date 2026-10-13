@@ -39,7 +39,7 @@ CREATE TABLE restaurants (
     phone               VARCHAR(40),
     website             VARCHAR(300),
     category_broad      VARCHAR(50),                     -- 대분류(한식/일식/중식/양식/동남아식/인도식/중동식/기타). 영상 추출값(load_notes.py)
-    category_detail     VARCHAR(50),                     -- 세부 분류(오마카세/파인다이닝/라멘 ...). 영상 추출값(load_notes.py)
+    category_detail     VARCHAR(50),                     -- 세부 분류(오마카세/파인다이닝/라멘 ...). 한 식당에 하나만(나머지는 restaurant_tags). 영상 추출값(load_notes.py, category_rules.py)
     chef_name           VARCHAR(300),                    -- 대표 셰프 이름(여러 명이면 쉼표로 연결). 자막 추출 + 근거 확인된 것만, 없으면 NULL (load_chefs.py)
     price_level         SMALLINT CHECK (price_level BETWEEN 0 AND 4),  -- Places priceLevel: 0 FREE ~ 4 VERY_EXPENSIVE. 없으면 NULL (load_prices.py)
     price_min           INTEGER,                         -- Places priceRange 하한(1인 기준, price_currency 단위)

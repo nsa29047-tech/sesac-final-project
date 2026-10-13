@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
-from .tools import TOOLS
+from .tools import TOOLS, category_section
 
 load_dotenv(find_dotenv(usecwd=True))
 
@@ -43,7 +43,22 @@ ROUTER_PROMPT = ("사용자의 마지막 말이 맛집 추천 챗봇이 DB(식�
                  "인사, 챗봇 사용법, 날씨·뉴스 같은 맛집과 무관한 말은 False.")
 
 
-def build_graph(checkpointer=None):
+CATEGORY_RULE = ("\n\n## 식당 분류\n"
+                 "대분류는 한식·일식·중식·양식·동남아식·인도식·중동식·기타이고, 세부 분류는 한 식당에 하나이며 대분류별로 현재 아래와 같다(괄호는 식당 수).\n{cats}\n"
+                 "- 음식·가게 종류를 묻는 질문(일식, 프랑스 요리, 타파스 바, 고깃집, 해산물, 족발 등)은 find_restaurants의 cuisine에 위 표기로 넣어 SQL로 찾는다. "
+                 "프랑스 요리는 '프렌치', 이탈리아 요리는 '이탈리안'처럼 표기를 맞춘다. 목록에 없는 종류(족발, 라멘)도 그 말 그대로 cuisine에 넣어 본다(세부 분류와 태그에서 찾고, 없으면 없다고 답한다).\n"
+                 "- 기타는 나라로 나눌 수 없는 식당(해산물 전문점 등)이다. '그 밖의 음식'이라는 뜻이 아니니 모를 때 기타를 쓰지 않는다.\n"
+                 "- 맛·분위기·메뉴·셰프 경력 같은 표현은 cuisine이 아니라 recommend_by_taste로 찾는다.")
+
+CARD_RULE = ("\n\n## 화면 표시 방식\n"
+             "추천한 식당의 지역·가격대·평점·미슐랭·링크는 화면이 카드로 따로 보여 주므로 답변에서 반복하지 않는다. "
+             "첫 문장에 한두 줄로 요약하고, 식당마다 **식당 이름**을 굵게 쓴 뒤 그 식당을 고른 이유(영상에서 소개된 메뉴·분위기·셰프)를 한 줄로만 쓴다. 링크와 표는 쓰지 않는다.")
+
+
+def build_graph(checkpointer=None, cards=False):
+    """cards=True면 화면(Streamlit)이 식당 카드를 그리므로 답변은 요약과 추천 이유만 쓰게 한다."""
+    cats = category_section()
+    system = SYSTEM_PROMPT + (CATEGORY_RULE.format(cats=cats) if cats else "") + (CARD_RULE if cards else "")
     llm = ChatOpenAI(model=CHAT_MODEL, temperature=0)
     router = llm.with_structured_output(Route)
     free = llm.bind_tools(TOOLS)
@@ -56,10 +71,10 @@ def build_graph(checkpointer=None):
 
     def call_model(state: MessagesState):
         first = isinstance(state["messages"][-1], HumanMessage)
-        return {"messages": [(forced if first else free).invoke([SystemMessage(SYSTEM_PROMPT), *state["messages"]])]}
+        return {"messages": [(forced if first else free).invoke([SystemMessage(system), *state["messages"]])]}
 
     def chat(state: MessagesState):
-        return {"messages": [llm.invoke([SystemMessage(SYSTEM_PROMPT + "\n\n이번 말은 검색이 필요 없다. 인사에는 인사하고, 할 수 있는 일(지역·미슐랭·가격대·메뉴·분위기별 맛집 추천, 식당 정보 조회)을 짧게 안내한다."), *state["messages"]])]}
+        return {"messages": [llm.invoke([SystemMessage(system + "\n\n이번 말은 검색이 필요 없다. 인사에는 인사하고, 할 수 있는 일(지역·미슐랭·가격대·메뉴·분위기별 맛집 추천, 식당 정보 조회)을 짧게 안내한다."), *state["messages"]])]}
 
     builder = StateGraph(MessagesState)
     builder.add_node("agent", call_model)

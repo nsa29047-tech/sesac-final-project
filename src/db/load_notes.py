@@ -4,7 +4,7 @@
 restaurants / videos 가 채워져 있어야 한다. 결과 JSON의 google_cid 로 식당을 찾는다.
 
 적재 내용:
-  - restaurants.category_broad / category_detail : 영상 추출값(Gemini)
+  - restaurants.category_broad / category_detail : 영상 추출값. 세부 분류는 하나만(나머지는 태그), 수동 분류 우선(category_rules.py)
   - restaurant_tags   : cuisine_tags (기존 태그에 추가)
   - menus             : 메뉴/음료. (restaurant_id, video_id) 단위로 지우고 다시 넣는다.
   - video_restaurant_notes : 컨셉/분위기/총평/임베딩용 요약 + 원본 JSON
@@ -21,6 +21,8 @@ from pathlib import Path
 import psycopg2
 from dotenv import load_dotenv
 from psycopg2.extras import Json
+
+from category_rules import MANUAL_DROP_TAGS, MICHELIN_TAG, normalize
 
 ROOT = Path(__file__).resolve().parents[2]
 NOTES_DIR = ROOT / "data" / "video_notes"
@@ -68,10 +70,13 @@ def load_note(cur, note):
     if cur.fetchone() is None:
         return None
 
+    # 세부 분류는 하나만 저장하고 나머지는 태그로 옮긴다. 사람이 정한 분류(MANUAL_CATEGORY)가 우선한다(category_rules.py)
+    broad, detail, extra_tags, _ = normalize(note["google_cid"], note.get("category_broad"), note.get("category_detail"))
     cur.execute("UPDATE restaurants SET category_broad = %s, category_detail = %s, updated_at = now() WHERE restaurant_id = %s",
-                (note.get("category_broad"), note.get("category_detail"), rid))
+                (broad, detail, rid))
 
-    for tag in note.get("cuisine_tags", []):
+    drop = MANUAL_DROP_TAGS.get(note["google_cid"], [])
+    for tag in [t for t in [*note.get("cuisine_tags", []), *extra_tags] if t not in drop and not MICHELIN_TAG.search(t)]:
         cur.execute("INSERT INTO restaurant_tags (restaurant_id, tag) VALUES (%s,%s) ON CONFLICT DO NOTHING", (rid, tag))
 
     cur.execute("DELETE FROM menus WHERE restaurant_id = %s AND video_id = %s", (rid, vid))

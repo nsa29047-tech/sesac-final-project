@@ -38,7 +38,8 @@ sesac-final-project/
 │   │   ├── collect_video_urls.py       # 1. 채널 영상 URL 수집 (yt-dlp, 이분 탐색)
 │   │   ├── channel_video_filter.py     # 2. 영상 소개란 기준 필터링
 │   │   ├── extract_restaurant_info.py  # 3. 식당 정보 추출 + Places/미슐랭 조회, 중국(CN) 제외
-│   │   ├── fill_michelin.py            # 3-b. 미슐랭 미조회 식당을 하루 한도만큼씩 채움 (--only-notes 태그: 자막 분석 결과가 있는 식당만)
+│   │   ├── fill_michelin.py            # 3-b. 미슐랭 미조회 식당을 하루 한도만큼씩 채움
+ (--only-notes 태그: 자막 분석 결과가 있는 식당만)
 │   │   ├── export_review_list.py       # 3-c. 사람이 확인할 식당(미슐랭 후보·매칭 실패·숙소)을 xlsx로 추출
 │   │   ├── enrich_places_details.py   # 4. Places Details 1회로 지역(시 > 구/군 > 동) 보강 + (--prices) 가격대 수집 -> data/restaurant_regions.csv, data/restaurant_prices_sample.csv. 예전 enrich_regions.py + fetch_price_level.py
 │   │   ├── extract_script_split.py     # 5''''. A/B 분리 추출(A 가게 정보 / B 메뉴·음료·코스 단계 + 코스 판단·셰프 호출), 건별 저장 -> data/video_notes/gpt-4o-mini-script-split-v2/ (2026년), -2025/ (2025년), -2024/ (2024년). 2024년 영상은 환경변수 TARGETS_FILE=data/urls/transcript_targets_20240101.txt 로 대상 목록을 바꿔 실행
@@ -75,6 +76,9 @@ sesac-final-project/
 │       ├── load_prices.py              # enrich_places_details.py --prices 결과 -> restaurants 가격 컬럼
 │       ├── create_scope_views.sql      # 조회 범위 뷰: restaurants_in_scope 등 (자막 분석 노트가 있는 식당만). 챗봇은 현재 쓰지 않음
 │       ├── create_chatbot_role.sql     # 챗봇 전용 DB 계정 스크립트. 현재 쓰지 않음(챗봇은 READONLY_POSTGRES_URI 사용)
+│       ├── category_rules.py           # 분류 규칙: 세부 분류는 한 식당에 하나만(나머지는 태그), 수동 분류 MANUAL_CATEGORY
+│       ├── pick_detail.py              # 세부 분류를 식당당 대표 하나로 정함(LLM) + 나머지는 태그, 미슐랭 태그 삭제. --limit 샘플, --apply 반영
+│       ├── normalize_categories.py     # 이미 적재된 DB의 세부 분류 정리(--dry-run 가능). load_notes.py도 같은 규칙을 쓴다
 │       ├── rag_search.py               # 검색 모듈: SQL 필터 -> 벡터 후보 -> LLM 충족 판단(맞는 결과 없으면 빈 목록)
 │       └── test_rag.py                 # RAG 검색 테스트(12개 질문, 현재 범위 120곳)
 ├── parse_apis/                         # Parse SDK 스캐폴드. 생성 코드는 git 제외(`uv run parse add`로 재생성)
@@ -123,7 +127,7 @@ sesac-final-project/
 | 테이블 | 설명 |
 |---|---|
 | `videos` | 영상 (video_id, url, title) |
-| `restaurants` | 식당 마스터. `google_cid`(Google Maps URL의 cid)로 중복 제거 |
+| `restaurants` | 식당 마스터. `google_cid`(Google Maps URL의 cid)로 중복 제거. 분류는 `category_broad`(한식·일식·중식·양식·동남아식·인도식·중동식·기타)와 `category_detail`(식당당 대표 하나만, 나머지는 `restaurant_tags`. 프렌치·이탈리안·타파스 바·고깃집·해산물·회 등으로 표기 통일). 미슐랭은 태그에 넣지 않는다 |
 | (`restaurants`의 `region_1~3`) | 지역(시 > 구/군 > 동·면, 최대 3단계, 없는 단계는 건너뛰고 앞에서부터 채움). 별도 테이블 없이 `restaurants` 컬럼으로 저장. 이전에 `regions` 테이블을 쓰던 DB는 `migrate_simplify_schema.sql` 실행(지역 컬럼 이전과 함께 `menus.description`·`is_signature`, `michelin_records`, `michelin_status.edition_type`·`is_active`, `restaurant_hours.is_closed` 제거), 안 쓰는 컬럼 정리는 `migrate_trim_columns.sql` |
 | `restaurant_hours` | 요일별 영업시간 (하루 여러 구간, 자정 넘김 지원). 휴무는 `open_time`/`close_time`이 NULL인 행. |
 | `michelin_status` | 미슐랭 현재 상태 (현재 등재 여부, 등급, 확인 시각) |
@@ -238,6 +242,8 @@ uv run langgraph dev
 - [ ] 자동 생성 자막 영상(약 72개)에 한해 Gemini 영상 분석으로 보강 (`extract_video_notes.py`, 샘플 검증 후 진행)
 - [x] LangGraph 챗봇 1차 구현(10/13): gpt-4o-mini ReAct 에이전트 + 도구 4개(SQL 필터, SQL 후 벡터 검색, 식당 상세, 좌표 조회). `uv run python src/chatbot/cli.py --trace "질문"` 또는 `uv run langgraph dev`. 질문 8개로 수동 확인했고 자동 평가셋·대화 기억 검증은 아직 없음
 - [x] 챗봇 평가셋(10/13): `src/chatbot/eval/` 41문항(정형 SQL 19·취향 RAG 12·없는 음식 5·식당 조회 3·잡담 2). 정답은 DB에서 SQL로 계산하고 도구 선택·결과 정확도·근거 없는 식당 언급을 점검한다. `uv run python src/chatbot/eval/run_eval.py [--ids ...] [--kind taste]`, 결과는 `data/eval/`. 첫 실행 51% -> 라우터·도구 강제 호출·국가 추측 금지·`city` 자동 좌표 조회·청크 종류별 후보·판단 프롬프트 보강으로 41/41(3회 연속, 고친 질문으로 잰 점수)
+- [x] Streamlit 챗봇 UI(10/13): `uv run streamlit run src/streamlit_app.py`. 토큰 단위 스트리밍, 도구 호출 진행 표시, 대화 기억(thread_id), 예시 질문·새 대화 버튼. 추천 식당은 맛집 앱 스타일 카드로 표시(영상 썸네일, 미슐랭 배지, 평점·가격대, 셰프, 영상·지도 버튼, 검색에 걸린 메뉴 설명). 카드는 LLM 글이 아니라 도구 결과(JSON)로 그리고(`src/chatbot/cards.py`), 그래프는 `build_graph(cards=True)`로 본문을 요약·추천 이유만 쓰게 한다. 테마는 `.streamlit/config.toml`
+- [x] 식당 상세 팝업(10/13): 카드의 "상세 정보 보기"를 누르면 `st.dialog`로 한 식당의 정보를 한눈에 보여 준다(`src/chatbot/detail.py` + `streamlit_app.py`). 영상 속 메뉴 타임라인(앱 안에서 유튜브 영상을 바로 재생하고, 메뉴를 누르면 그 시각으로 이동해 재생하며 재생 중인 메뉴를 강조. 유튜브 IFrame API를 `components.html`로 임베드, 임베드가 막힌 영상은 "YouTube에서 보기" 링크로 대체. 코스 단계·조리 특징 설명), 영상 소개(컨셉·분위기·키포인트·총평), 음료, 기본 정보(주소·전화·가격·영업시간·웹사이트·지도). 메뉴별 맛 후기는 저장하지 않아 조리 특징만 보여 준다
 - [ ] n8n 자동화
 
 ## 알려진 이슈 / TODO
