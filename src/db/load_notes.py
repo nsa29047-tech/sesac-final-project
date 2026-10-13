@@ -45,15 +45,15 @@ def timestamp_to_sec(text):
 
 
 def menu_rows(note):
-    """추출 JSON -> menus 행 목록 [(item_type, name, description, evidence, first_appearance_sec, mentioned_sec, menu_order, course_stage)]
-    first_appearance(영상 분석)과 mentioned_at(자막 분석)은 키가 있는 쪽만 채워진다."""
+    """추출 JSON -> menus 행 목록 [(item_type, name, description, evidence, mentioned_sec, menu_order, course_stage)]
+    메뉴 시각은 mentioned_sec 하나만 쓴다. 영상 분석은 first_appearance(화면 첫 등장), 자막 분석은 mentioned_at(자막 시각)이고 키가 있는 쪽 값을 넣는다."""
     rows = []
     for m in note.get("menus", []):
         rows.append(("FOOD", m["name"], m.get("cooking_features"), m.get("evidence"),
-                     timestamp_to_sec(m.get("first_appearance")), timestamp_to_sec(m.get("mentioned_at")),
+                     timestamp_to_sec(m.get("first_appearance") or m.get("mentioned_at")),
                      m.get("order"), m.get("course_stage")))
     for d in note.get("drinks", []):
-        rows.append(("DRINK", d["name"], d.get("review"), None, None, None, None, None))
+        rows.append(("DRINK", d["name"], d.get("review"), None, None, None, None))
     return rows
 
 
@@ -86,8 +86,8 @@ def load_note(cur, note):
             continue
         seen.add((row[0], row[1]))
         cur.execute("""INSERT INTO menus (restaurant_id, video_id, item_type, name, description, evidence,
-                       first_appearance_sec, mentioned_sec, menu_order, course_stage)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                       mentioned_sec, menu_order, course_stage)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (rid, vid, *row))
 
     cur.execute("""

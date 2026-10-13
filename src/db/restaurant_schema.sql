@@ -103,8 +103,7 @@ CREATE TABLE menus (
     name             VARCHAR(200) NOT NULL,
     description      TEXT,                                -- 설명(음식은 조리 특징, 음료는 특징·페어링). 평가어·가격은 후처리로 뺀다
     evidence         TEXT,                                -- 근거 발언/화면 (시각 포함)
-    first_appearance_sec INTEGER,                         -- 영상 분석: 음식이 화면에 처음 보이는 시각(초). 확인 안 되면 NULL
-    mentioned_sec    INTEGER,                             -- 자막 분석: 서빙·시식 단서 또는 첫 언급 자막 시각(초). 화면 등장 시각이 아니라 추정치
+    mentioned_sec    INTEGER,                             -- 음식이 영상에 나오는 시각(초). 영상 분석은 화면 첫 등장, 자막 분석은 서빙·시식 단서 또는 첫 언급 자막 시각(추정치). 확인 안 되면 NULL
     menu_order       SMALLINT,                            -- 영상에서 나온 순서(1부터). 코스는 서빙 순서
     course_stage     VARCHAR(20) CHECK (course_stage IN ('아뮤즈부쉬', '식전빵', '전채', '수프', '생선', '메인', '치즈', '프리디저트', '디저트', '프티푸르'))  -- 코스 식당의 음식만. 참고용(필터 금지)
 );

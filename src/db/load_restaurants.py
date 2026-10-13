@@ -6,6 +6,7 @@
 """
 import re
 import sys
+from pathlib import Path
 from datetime import time
 from urllib.parse import parse_qs, urlparse
 
@@ -171,6 +172,12 @@ def main(xlsx, dsn):
 
     conn.commit()
     print(f"loaded {loaded} rows; skipped (google_cid 없음): {skipped_rows or 'none'}; hours not parsed for: {skipped_hours or 'none'}; 미슐랭 미확인(michelin_status 미적재): {len(unchecked_michelin)}곳")
+
+    # 가격대는 Places Text Search 가 식당 정보와 함께 받아 별도 CSV 에 기록한다(22컬럼 CSV 에는 없음). 식당을 적재할 때 같이 반영한다.
+    prices_csv = Path(__file__).resolve().parents[2] / "data" / "restaurant_prices_sample.csv"
+    if prices_csv.exists():
+        import load_prices
+        load_prices.main(prices_csv)
 
 
 if __name__ == "__main__":

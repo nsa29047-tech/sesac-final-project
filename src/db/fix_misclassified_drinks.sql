@@ -21,7 +21,7 @@ FROM menus m JOIN fix_drinks f ON f.menu_id = m.menu_id AND f.name = m.name
 WHERE m.item_type = 'FOOD'
   AND c.chunk_type = 'FOOD' AND c.restaurant_id = m.restaurant_id AND c.video_id = m.video_id AND c.chunk_key = m.name;
 
-UPDATE menus m SET item_type = 'DRINK', mentioned_sec = NULL, first_appearance_sec = NULL
+UPDATE menus m SET item_type = 'DRINK', mentioned_sec = NULL
 FROM fix_drinks f
 WHERE m.menu_id = f.menu_id AND m.name = f.name AND m.item_type = 'FOOD';
 
