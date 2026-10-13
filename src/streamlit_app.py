@@ -17,7 +17,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage  # no
 from langgraph.checkpoint.memory import MemorySaver  # noqa: E402
 
 from chatbot.cards import CSS, card_html, collect, esc, pick, strip_links  # noqa: E402
-from chatbot.detail import TL_CSS, drinks_html, fetch_detail, first_thumb, hours_html, player_html  # noqa: E402
+from chatbot.detail import DETAIL_CSS, TL_CSS, drinks_html, fetch_detail, info_html, intro_html, player_html, section  # noqa: E402
 from chatbot.graph import build_graph  # noqa: E402
 
 EXAMPLES = [
@@ -95,86 +95,55 @@ def load_detail(restaurant_id: int) -> dict:
 
 def render_detail(d: dict):
     """식당 상세 팝업의 내용: 영상 속 메뉴 타임라인 -> 영상 소개·총평 -> 음료 -> 기본 정보(영업시간·주소·가격대)."""
-    st.markdown(TL_CSS + CSS.replace("\n", ""), unsafe_allow_html=True)
-    thumb = first_thumb(d)
-    left, right = st.columns([2, 3]) if thumb else (None, st.container())
-    if thumb:
-        left.image(thumb, use_container_width=True)
-    with right:
-        parts = [p for p in (d.get("region") or "").split(" > ") if p]
-        cat = d.get("category_detail") or d.get("category_broad") or ""
-        st.markdown(f'<div class="rc-sub">{esc(" ".join(parts[-2:]))}{" · " if parts and cat else ""}{esc(cat)}</div>', unsafe_allow_html=True)
-        chips = []
-        if d.get("michelin") and not d["michelin"].startswith("미슐랭 아님"):
-            chips.append(f'<span class="rc-badge" style="position:static">{esc(d["michelin"].replace("미슐랭 ", "★ "))}</span>')
-        if d.get("rating"):
-            n = f' <span class="rc-count">({d["rating_count"]:,})</span>' if d.get("rating_count") else ""
-            chips.append(f'<span class="rc-star">★ {esc(d["rating"])}</span>{n}')
-        if d.get("price_level"):
-            chips.append(f'<span class="rc-price"><b>{"●" * int(d["price_level"])}</b>{"●" * (4 - int(d["price_level"]))}</span>')
-        if d.get("chef_name"):
-            chips.append(f'<span class="rc-chip">👨‍🍳 {esc(d["chef_name"])}</span>')
-        st.markdown('<div class="rc-meta" style="gap:12px">' + "".join(chips) + "</div>", unsafe_allow_html=True)
-        if d.get("tags"):
-            st.markdown('<div class="kp">' + "".join(f"<span>#{esc(t)}</span>" for t in d["tags"][:8]) + "</div>", unsafe_allow_html=True)
+    st.markdown(TL_CSS + DETAIL_CSS + CSS.replace("\n", ""), unsafe_allow_html=True)   # DETAIL_CSS 가 뒤에 와서 .sec/.kp 같은 겹치는 규칙을 덮어쓴다
+    # 팝업 제목(식당 이름) 바로 아래에 요약 정보를 둔다. 썸네일은 아래 영상 플레이어에 이미 보이므로 따로 두지 않는다.
+    parts = [p for p in (d.get("region") or "").split(" > ") if p]
+    cat = d.get("category_detail") or d.get("category_broad") or ""
+    st.markdown(f'<div class="rc-sub" style="font-size:14px;margin-top:-6px">{esc(" ".join(parts[-2:]))}{" · " if parts and cat else ""}{esc(cat)}</div>', unsafe_allow_html=True)
+    chips = []
+    if d.get("michelin") and not d["michelin"].startswith("미슐랭 아님"):
+        chips.append(f'<span class="rc-badge" style="position:static">{esc(d["michelin"].replace("미슐랭 ", "★ "))}</span>')
+    if d.get("rating"):
+        n = f' <span class="rc-count">({d["rating_count"]:,})</span>' if d.get("rating_count") else ""
+        chips.append(f'<span class="rc-star" style="font-size:15px">★ {esc(d["rating"])}</span>{n}')
+    if d.get("price_level"):
+        chips.append(f'<span class="rc-price"><b>{"●" * int(d["price_level"])}</b>{"●" * (4 - int(d["price_level"]))}</span>')
+    if d.get("chef_name"):
+        chips.append(f'<span class="rc-chip">👨‍🍳 {esc(d["chef_name"])}</span>')
+    st.markdown('<div class="rc-meta" style="gap:12px;margin-top:4px">' + "".join(chips) + "</div>", unsafe_allow_html=True)
+    if d.get("tags"):
+        st.markdown('<div class="kp">' + "".join(f"<span>#{esc(t)}</span>" for t in d["tags"][:8]) + "</div>", unsafe_allow_html=True)
 
     menus = d["menus"]
-    st.markdown('<div class="sec">🎬 영상에 나온 메뉴 타임라인</div>', unsafe_allow_html=True)
-    if any(m["item_type"] == "FOOD" for m in menus):
-        for n in d["notes"]:
-            mine = [m for m in menus if m["video_id"] == n["video_id"]]
-            if len(d["notes"]) > 1:
-                st.markdown(f'<div class="rc-sub" style="margin-top:8px">📺 {esc(n["title"])}</div>', unsafe_allow_html=True)
-            if any(m['item_type'] == 'FOOD' for m in mine):
-                components.html(player_html(n['video_id'], n['url'], mine), height=780)   # 영상 재생 + 타임라인(누르면 그 시각으로 이동)
-        st.caption("메뉴를 누르면 그 장면부터 재생돼요. 시각은 자막에서 추정한 값이라 실제 화면과 몇 초 차이가 날 수 있어요. 메뉴별 맛 후기는 저장하지 않아 조리 특징 설명만 보여 줘요.")
-    else:
-        st.info("이 식당은 영상 속 메뉴 정보가 아직 없어요.")
+    # 타임라인은 접고 펼 수 있게 한다(펼친 채로 두면 아래 정보까지 스크롤이 길어진다)
+    with st.expander("🎬 영상에 나온 메뉴 타임라인", expanded=True):
+        if any(m["item_type"] == "FOOD" for m in menus):
+            for n in d["notes"]:
+                mine = [m for m in menus if m["video_id"] == n["video_id"]]
+                if len(d["notes"]) > 1:
+                    st.markdown(f'<div class="rc-sub" style="margin-top:8px">📺 {esc(n["title"])}</div>', unsafe_allow_html=True)
+                if any(m['item_type'] == 'FOOD' for m in mine):
+                    components.html(player_html(n['video_id'], n['url'], mine), height=920)   # 영상 재생 + 타임라인(누르면 그 시각으로 이동)
+            st.caption("메뉴를 누르면 그 장면부터 재생돼요. 시각은 자막에서 추정한 값이라 실제 화면과 몇 초 차이가 날 수 있어요. 메뉴별 맛 후기는 저장하지 않아 조리 특징 설명만 보여 줘요.")
+        else:
+            st.info("이 식당은 영상 속 메뉴 정보가 아직 없어요.")
 
+    st.markdown(section("📝", "영상 속 소개와 총평"), unsafe_allow_html=True)
     for n in d["notes"]:
-        st.markdown('<div class="sec">📝 영상 속 소개와 총평</div>', unsafe_allow_html=True)
-        link = f'<a href="{esc(n["url"])}" target="_blank">{esc(n["title"])}</a>'
-        st.markdown(f'<div class="rc-sub">{link}' + (f' · 코스: {esc(n["course_name"])}' if n.get("course_name") and n["course_name"] != "코스" else (" · 코스 요리" if n.get("is_course") else "")) + "</div>", unsafe_allow_html=True)
-        if n.get("concept"):
-            st.markdown(f"**컨셉** {n['concept']}")
-        if n.get("atmosphere"):
-            st.markdown(f"**분위기** {n['atmosphere']}")
-        if n.get("key_points"):
-            st.markdown('<div class="kp">' + "".join(f"<span>{esc(k)}</span>" for k in n["key_points"]) + "</div>", unsafe_allow_html=True)
-        if n.get("final_review"):
-            st.markdown(f'<div class="rv">“{esc(n["final_review"])}”</div>', unsafe_allow_html=True)
+        st.markdown(intro_html(n), unsafe_allow_html=True)
     if d.get("chef_info"):
-        st.caption(f"셰프 소개(영상에서 한 말이라 검증된 사실은 아니에요): {d['chef_info']}")
+        st.markdown(f'<div class="note">👨‍🍳 셰프 소개 · {esc(d["chef_info"])} (영상에서 한 말이라 검증된 사실은 아니에요)</div>', unsafe_allow_html=True)
 
     drinks = drinks_html(menus)
     if drinks:
-        st.markdown('<div class="sec">🍷 음료</div>', unsafe_allow_html=True)
-        st.markdown(drinks, unsafe_allow_html=True)
+        st.markdown(section("🍷", "음료"), unsafe_allow_html=True)
+        st.markdown('<div class="card white">' + drinks + "</div>", unsafe_allow_html=True)
 
-    st.markdown('<div class="sec">📍 기본 정보</div>', unsafe_allow_html=True)
-    info, hrs = st.columns(2)
-    with info:
-        rows = [("주소", d.get("formatted_address")), ("전화", d.get("phone"))]
-        if d.get("price_min"):
-            cur = d.get("price_currency") or ""
-            rows.append(("가격", f'{cur} {d["price_min"]:,}~' + (f'{d["price_max"]:,}' if d.get("price_max") else "") + " (1인 기준)"))
-        elif d.get("price_level"):
-            rows.append(("가격대", f'{"●" * int(d["price_level"])}{"○" * (4 - int(d["price_level"]))} (Google 기준 단계)'))
-        else:
-            rows.append(("가격대", "정보 없음"))
-        for k, v in rows:
-            if v:
-                st.markdown(f"**{k}**  \n{md(str(v))}")
-        links = []
-        if d.get("website"):
-            links.append(f'<a href="{esc(d["website"])}" target="_blank">웹사이트</a>')
-        if d.get("google_maps_url"):
-            links.append(f'<a href="{esc(d["google_maps_url"])}" target="_blank">구글 지도</a>')
-        if links:
-            st.markdown(" · ".join(links), unsafe_allow_html=True)
-    with hrs:
-        st.markdown("**영업시간**")
-        st.markdown(hours_html(d["hours"]), unsafe_allow_html=True)
+    st.markdown(section("📍", "기본 정보"), unsafe_allow_html=True)
+    info, hrs = info_html(d)
+    left, right = st.columns(2)
+    left.markdown(info, unsafe_allow_html=True)
+    right.markdown(hrs, unsafe_allow_html=True)
 
 
 def show_detail(restaurant_id: int, name: str):

@@ -149,3 +149,91 @@ def player_html(video_id: str, url: str, menus: list) -> str:
     items = [{"sec": m["mentioned_sec"], "name": m["name"], "stage": m.get("course_stage"), "desc": m.get("description")} for m in foods]
     dump = lambda o: json.dumps(o, ensure_ascii=False).replace("</", r"<\/")   # </script> 방지
     return PLAYER_TEMPLATE.replace("__VID__", dump(video_id)).replace("__URL__", dump(url)).replace("__ITEMS__", dump(items))
+
+
+DETAIL_CSS = """<style>
+.sec{font-size:16px;font-weight:800;color:#222;margin:28px 0 10px;padding-top:2px}
+.card{background:#faf7f4;border-radius:14px;padding:14px 16px;margin-bottom:10px}
+.card.white{background:#fff;border:1px solid #eee}
+.kv{display:grid;grid-template-columns:62px 1fr;gap:9px 12px;font-size:14px;line-height:1.6}
+.kv .k{color:#9a8f86;font-size:12.5px;font-weight:600;padding-top:2px}
+.kv .v{color:#2b2b2b;word-break:break-word}
+.vid{font-size:13px;color:#888;margin-bottom:10px}
+.vid a{color:#666;text-decoration:none;border-bottom:1px solid #ddd}
+.vid b{color:#ff5a3c;font-weight:700;margin-right:6px}
+.quote{border-left:3px solid #ff5a3c;padding:2px 0 2px 14px;font-size:14.5px;color:#333;line-height:1.65;margin:14px 0 4px}
+.quote small{display:block;color:#aaa;font-size:11.5px;margin-top:3px}
+.note{font-size:12px;color:#a09890;line-height:1.55;margin-top:10px}
+.btns{display:flex;gap:8px;margin-top:12px}
+.btns a{font-size:13px;font-weight:600;padding:7px 14px;border-radius:999px;text-decoration:none;border:1px solid #ffd2c5;color:#e0481f;background:#fff}
+.hrs2{display:grid;grid-template-columns:62px 1fr;gap:8px 12px;font-size:14px;line-height:1.5}
+.hrs2 .d{font-weight:700;color:#333;font-size:13.5px}
+.hrs2 .t{color:#2b2b2b}
+.hrs2 .t.off{color:#bbb}
+.kp{margin:12px 0 0}
+.card .dr:last-child{border-bottom:0}
+</style>""".replace("\n", "")
+
+
+def hours_groups(hours: list):
+    """요일별 영업시간을 같은 시간이 이어지는 요일끼리 묶는다. [('월–금', '12:00 - 15:00, 18:00 - 22:30'), ('토', ...)]. 휴무는 '휴무'."""
+    by_day = {}
+    for h in hours:
+        by_day.setdefault(h["day_of_week"], []).append("휴무" if h["open_time"] is None else f"{h['open_time']:%H:%M} - {h['close_time']:%H:%M}")
+    groups = []
+    for d in DAY_ORDER:
+        text = ", ".join(by_day[d]) if d in by_day else None
+        if groups and groups[-1][2] == text:
+            groups[-1][1].append(d)
+        else:
+            groups.append([None, [d], text])
+    out = []
+    for _, days, text in groups:
+        label = DAY_NAMES[days[0]] if len(days) == 1 else f"{DAY_NAMES[days[0]]}–{DAY_NAMES[days[-1]]}"
+        out.append((label, text or "정보 없음"))
+    return out
+
+
+def section(icon: str, title: str) -> str:
+    return f'<div class="sec">{icon} {esc(title)}</div>'
+
+
+def intro_html(n: dict) -> str:
+    """영상 한 편의 식당 소개: 영상 제목, 컨셉·분위기(라벨/값), 키포인트, 총평 인용."""
+    course = f' · 코스: {esc(n["course_name"])}' if n.get("course_name") and n["course_name"] != "코스" else (" · 코스 요리" if n.get("is_course") else "")
+    parts = [f'<div class="vid"><b>▶</b><a href="{esc(n["url"])}" target="_blank">{esc(n["title"])}</a>{course}</div>']
+    rows = [(k, n.get(f)) for k, f in (("컨셉", "concept"), ("분위기", "atmosphere")) if n.get(f)]
+    if rows:
+        parts.append('<div class="kv">' + "".join(f'<div class="k">{k}</div><div class="v">{esc(v)}</div>' for k, v in rows) + "</div>")
+    if n.get("key_points"):
+        parts.append('<div class="kp">' + "".join(f"<span>{esc(k)}</span>" for k in n["key_points"]) + "</div>")
+    if n.get("final_review"):
+        parts.append(f'<div class="quote">{esc(n["final_review"])}<small>영상 속 총평</small></div>')
+    return '<div class="card">' + "".join(parts) + "</div>"
+
+
+def info_html(d: dict):
+    """기본 정보 카드 두 장: (주소·전화·가격·링크, 영업시간)."""
+    rows = [("주소", d.get("formatted_address")), ("전화", d.get("phone"))]
+    if d.get("price_min"):
+        cur = d.get("price_currency") or ""
+        rng = f'{d["price_min"]:,}~' + (f'{d["price_max"]:,}' if d.get("price_max") else "")
+        rows.append(("가격", f"{cur} {rng} (1인 기준)"))
+    elif d.get("price_level"):
+        lv = int(d["price_level"])
+        rows.append(("가격대", f'{"●" * lv}{"○" * (4 - lv)} (Google 기준 단계)'))
+    else:
+        rows.append(("가격대", "정보 없음"))
+    links = []
+    if d.get("website"):
+        links.append(f'<a href="{esc(d["website"])}" target="_blank">웹사이트</a>')
+    if d.get("google_maps_url"):
+        links.append(f'<a href="{esc(d["google_maps_url"])}" target="_blank">구글 지도</a>')
+    left = ('<div class="card white"><div class="kv">' + "".join(f'<div class="k">{k}</div><div class="v">{esc(v)}</div>' for k, v in rows if v) + "</div>"
+            + (f'<div class="btns">{"".join(links)}</div>' if links else "") + "</div>")
+    if d["hours"]:
+        right = ('<div class="card white"><div class="hrs2">' + "".join(
+            f'<div class="d">{esc(lab)}</div><div class="t{" off" if t == "휴무" else ""}">{esc(t)}</div>' for lab, t in hours_groups(d["hours"])) + "</div></div>")
+    else:
+        right = '<div class="card white"><div class="note" style="margin:0">영업시간 정보가 없습니다.</div></div>'
+    return left, right
