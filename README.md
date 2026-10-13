@@ -31,7 +31,8 @@
 ```
 sesac-final-project/
 ├── src/
-│   ├── app.py                          # LangGraph 앱 (graph 엔트리포인트, 현재 빈 그래프)
+│   ├── app.py                          # LangGraph 엔트리포인트 (chatbot.graph.build_graph)
+│   ├── chatbot/                        # 챗봇 에이전트: graph.py(ReAct 그래프+시스템 프롬프트), tools.py(find_restaurants·recommend_by_taste·get_restaurant_info·geocode_place), cli.py(터미널 대화)
 │   ├── pipeline/                       # 데이터 수집 파이프라인
 │   │   ├── common.py                   # 자막 추출 단계의 공통 코드(셰프 추출 chefs_for_store 포함): 경로·모델·OpenAI 클라이언트, load_stores, 시각 보정(fix_times), 평가어 제거(strip_generic), 영상 구간 나누기(video_parts), 코스 판단(detect_course), 음식 분류(classify_cuisine)
 │   │   ├── collect_video_urls.py       # 1. 채널 영상 URL 수집 (yt-dlp, 이분 탐색)
@@ -72,8 +73,8 @@ sesac-final-project/
 │       ├── migrate_price_columns.sql   # 마이그레이션(10/8): restaurants.price_level/price_min/price_max/price_currency
 │       ├── migrate_chef_chunk.sql      # 마이그레이션(10/8): restaurant_chunks에 CHEF 청크 종류 추가
 │       ├── load_prices.py              # enrich_places_details.py --prices 결과 -> restaurants 가격 컬럼
-│       ├── create_scope_views.sql      # 챗봇 조회 범위 뷰: restaurants_in_scope 등 (자막 분석 노트가 있는 식당만)
-│       ├── create_chatbot_role.sql     # 챗봇 전용 DB 계정(뷰와 검색 테이블만 조회, 원본 테이블 조회 불가). 비밀번호를 채워 직접 실행
+│       ├── create_scope_views.sql      # 조회 범위 뷰: restaurants_in_scope 등 (자막 분석 노트가 있는 식당만). 챗봇은 현재 쓰지 않음
+│       ├── create_chatbot_role.sql     # 챗봇 전용 DB 계정 스크립트. 현재 쓰지 않음(챗봇은 READONLY_POSTGRES_URI 사용)
 │       ├── rag_search.py               # 검색 모듈: SQL 필터 -> 벡터 후보 -> LLM 충족 판단(맞는 결과 없으면 빈 목록)
 │       └── test_rag.py                 # RAG 검색 테스트(12개 질문, 현재 범위 120곳)
 ├── parse_apis/                         # Parse SDK 스캐폴드. 생성 코드는 git 제외(`uv run parse add`로 재생성)
@@ -131,13 +132,13 @@ sesac-final-project/
 | `restaurant_tags` | 음식 검색용 태그 (티본 스테이크, 스시 등) |
 | `video_restaurant_notes` | (영상, 식당)별 컨셉·분위기·총평·임베딩용 요약, 코스 식당 여부 `is_course`·코스 이름 `course_name`, 추출 원본 JSON |
 | `restaurant_chunks` | RAG 청크와 임베딩 (pgvector, `restaurant_chunks.sql`로 별도 생성). 종류: OVERVIEW(식당 개요) / FOOD / DRINK(메뉴별) / CHEF(셰프 이름·경력만 담은 짧은 청크) |
-| `restaurants_in_scope`, `restaurant_hours_in_scope`, `michelin_status_in_scope` | **뷰.** 자막 분석 노트가 있는 식당(현재 120곳)만 보이는 조회용. 챗봇은 원본 `restaurants`·`restaurant_hours`·`michelin_status` 대신 이 뷰만 조회한다(`create_scope_views.sql`) |
+| `restaurants_in_scope`, `restaurant_hours_in_scope`, `michelin_status_in_scope` | **뷰.** 자막 분석 노트가 있는 식당(현재 120곳)만 보이는 조회용(`create_scope_views.sql`). 챗봇은 현재 쓰지 않고 원본 테이블을 조회한다 |
 
 설계 시 참고한 점:
 - `google_cid`는 부호 없는 64bit 정수라 BIGINT 범위를 넘을 수 있어 문자열로 저장합니다.
 - `google_open_now`는 조회 시점 값이므로 저장하지 않고, 영업 여부는 `restaurant_hours`와 현지 시간으로 계산합니다.
 - 결과 CSV는 22개 컬럼입니다. 미슐랭 연도별 이력(`history`)은 저장하지 않습니다. 음식 분류·소개글은 쓰지 않고 자막 분석 결과를 씁니다. 가격대는 Places `priceLevel`/`priceRange`를 `restaurants.price_level`(0 무료 ~ 4 매우 비쌈)·`price_min`·`price_max`·`price_currency`에 저장합니다(영상의 메뉴 가격은 저장하지 않음). 현재는 자막 분석 노트가 있는 120곳만 호출했고(약 100곳에 값 있음), 통화가 섞여 있어 비교는 `price_level`로 합니다. `michelin_status`에는 `edition_type`·`is_active`를 두지 않고 `is_michelin`(현재 등재 여부)과 `latest_grade`만 저장합니다.
-- **챗봇 조회 규칙**: 에이전트의 SQL 도구는 `restaurants`·`restaurant_hours`·`michelin_status` 원본을 직접 조회하지 않고 `*_in_scope` 뷰만 씁니다. 원본에는 자막 분석이 없는 식당이 남아 있어 SQL 전용 답변에 섞이기 때문입니다. `create_chatbot_role.sql`로 만든 `chatbot_user`는 원본 테이블 권한이 없어 DB 권한으로도 막힙니다(이 계정을 쓸 때는 `restaurants_in_scope`와 조인). 이 계정은 아직 만들지 않았습니다.
+- **챗봇 조회 규칙**: 에이전트의 SQL 도구는 `restaurants`·`restaurant_hours`·`michelin_status` 등 원본 테이블을 읽기 전용 계정(`READONLY_POSTGRES_URI`, `create_readonly_role.sql`)으로 조회합니다(10/13 변경, 이전에는 `*_in_scope` 뷰만 조회). 노트가 없는 식당(약 100곳)은 메뉴·분위기가 없지만 `find_restaurants`(SQL 전용) 결과에는 나옵니다. 벡터 검색(`recommend_by_taste`)은 노트·청크와 조인하므로 노트가 있는 식당만 나옵니다. 조회 범위를 노트가 있는 식당으로 제한하려면 `create_scope_views.sql`의 뷰를 쓰도록 `src/chatbot/tools.py`·`rag_search.py`의 테이블 이름을 되돌립니다.
 - RAG용 `restaurant_chunks`는 pgvector 확장이 필요해 `restaurant_chunks.sql`로 분리했습니다. 이미 이전 스키마를 적용한 DB는 `migrate_notes.sql`을 실행하세요.
 
 ## 시작하기
@@ -161,8 +162,7 @@ uv run parse add --marketplace guide-michelin-com-api
 | `TAVILY_API_KEY` | 미슐랭 폴백 검색(`--michelin-fallback`)과 이력 근거 검색 |
 | `GEMINI_API_KEY` | Gemini API. 영상(시각·음성)을 직접 분석할 때 사용. 현재 파이프라인은 쓰지 않고, 자동 생성 자막 영상 보강 단계에서 쓸 예정 |
 | `POSTGRES_URI` | PostgreSQL 접속 문자열 |
-| `CHATBOT_POSTGRES_URI` | 챗봇 전용 계정(`chatbot_user`, `create_chatbot_role.sql`) 접속 문자열. `rag_search.py`와 챗봇이 쓴다. 없으면 `POSTGRES_URI`로 접속하며 경고한다 |
-| `READONLY_POSTGRES_URI` | 읽기 전용 계정 접속 문자열. `src/db/test_readonly_role.py`에서 권한 확인용으로만 사용 |
+| `READONLY_POSTGRES_URI` | 읽기 전용 계정(`create_readonly_role.sql`) 접속 문자열. 챗봇(`src/chatbot`)과 `rag_search.py`가 원본 테이블 조회에 쓴다. 없으면 `POSTGRES_URI`로 접속하며 경고한다 |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT` | LangSmith 트레이싱 |
 
 ### 3. 파이프라인 실행
@@ -234,9 +234,9 @@ uv run langgraph dev
 - [x] 수동 자막 영상 확대(10/8): 200개 영상 중 제작자 수동 한국어 자막은 126개(2024년 51·2025년 38·2026년 37), 자동 생성 72개, 자막 없음 2개입니다. 2025년 수동 자막 32개 영상 34곳(중국 본토 6개 영상 제외, ID `data/urls/manual_2025_ids.txt`)과 2024년 40개 영상 41곳(`data/urls/manual_2024_ready_ids.txt`, 가게 정보 없음 7·중국 4 제외)을 같은 A/B 분리 추출로 처리해 적재했습니다(결과 `gpt-4o-mini-script-split-v2-2025`·`-2024`, 각 약 $0.12). 미슐랭은 Parse 결과를 근거로 하고(영상 언급 아님) 철자 차이로 매칭이 실패한 아켈라레는 수동 반영했습니다. 식당 이름이 채널명("비밀이야")이나 일반 명칭으로 들어간 3건은 영상 제목 기준으로 고쳤고(라미띠에·뜨락·마틴 베라사테기), 소개란에 상호가 없으면 제목에서 찾도록 프롬프트에 규칙을 넣었습니다. Places가 건물로 잘못 매칭한 미츠이 2호관은 ACA(la cocina de acá)로 다시 매칭했습니다. 사용자가 제외한 4곳(파라다이스 X Les Amis, 순환수산, 광해호수산, 미가키쇼 나가야마)은 DB와 CSV에서 지웠습니다. 조회 범위는 51 → 120곳입니다. 아직 하지 않은 것: 자동 생성 자막 72개 영상, 소개란에 가게 정보가 없는 영상(꼼모아 강남 `nyKPQqu6674` 등), 환각·누락 검증
 - [x] CHEF 청크: 셰프 경력 질문 순위 개선("흑백요리사에 나온 셰프" 질문에서 팔선 8위 -> 1위)
 - [x] 검색 모듈 `rag_search.py`: LLM이 질문 충족 여부를 판단해 맞는 결과가 없으면 "없음", 홍콩처럼 음식 스타일로 쓰이는 지명은 country_code가 아니라 카테고리·태그로 판단
-- [x] 챗봇 조회 범위 뷰 `*_in_scope`(현재 120곳)와 챗봇 전용 계정 스크립트 `create_chatbot_role.sql` (계정은 아직 만들지 않음)
+- [x] 조회 범위 뷰 `*_in_scope`(현재 120곳)와 챗봇 전용 계정 스크립트 `create_chatbot_role.sql`: 만들어 두었으나 챗봇은 10/13부터 쓰지 않고 원본 테이블을 읽기 전용 계정으로 조회
 - [ ] 자동 생성 자막 영상(약 72개)에 한해 Gemini 영상 분석으로 보강 (`extract_video_notes.py`, 샘플 검증 후 진행)
-- [ ] LangGraph 챗봇 구현 (현재 `app.py`는 빈 그래프)
+- [x] LangGraph 챗봇 1차 구현(10/13): gpt-4o-mini ReAct 에이전트 + 도구 4개(SQL 필터, SQL 후 벡터 검색, 식당 상세, 좌표 조회). `uv run python src/chatbot/cli.py --trace "질문"` 또는 `uv run langgraph dev`. 질문 8개로 수동 확인했고 자동 평가셋·대화 기억 검증은 아직 없음
 - [ ] n8n 자동화
 
 ## 알려진 이슈 / TODO

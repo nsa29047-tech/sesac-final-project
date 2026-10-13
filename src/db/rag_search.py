@@ -41,10 +41,10 @@ class Judgement(BaseModel):
 
 
 def connect():
-    """챗봇 전용 계정(CHATBOT_POSTGRES_URI)으로 접속한다. 없으면 POSTGRES_URI(관리자)로 접속하되 경고한다."""
-    uri = os.environ.get("CHATBOT_POSTGRES_URI")
+    """읽기 전용 계정(READONLY_POSTGRES_URI)으로 접속한다. 없으면 POSTGRES_URI(관리자)로 접속하되 경고한다."""
+    uri = os.environ.get("READONLY_POSTGRES_URI")
     if not uri:
-        print("[경고] CHATBOT_POSTGRES_URI 가 없어 POSTGRES_URI(관리자 계정)로 접속합니다. 챗봇은 전용 계정을 쓰세요.")
+        print("[경고] READONLY_POSTGRES_URI 가 없어 POSTGRES_URI(관리자 계정)로 접속합니다. 읽기 전용 계정을 쓰세요.")
         uri = os.environ["POSTGRES_URI"]
     return psycopg2.connect(uri)
 
@@ -57,7 +57,7 @@ def candidates(cur, client, query, where="TRUE", params=None, chunk_type=None, k
         SELECT c.restaurant_id, COALESCE(r.name_ko, r.name_official), c.chunk_type, c.chunk_key, c.content,
                round((c.embedding <=> %s::vector)::numeric, 3)
         FROM restaurant_chunks c
-        JOIN restaurants_in_scope r USING (restaurant_id)
+        JOIN restaurants r USING (restaurant_id)
         JOIN video_restaurant_notes n ON n.restaurant_id = c.restaurant_id AND n.video_id = c.video_id
         WHERE ({where}) AND {style_sql} {"AND c.chunk_type = %s" if chunk_type else ""}
         ORDER BY c.embedding <=> %s::vector LIMIT {k}"""
