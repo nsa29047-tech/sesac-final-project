@@ -9,6 +9,7 @@ import json
 import os
 import sys
 from decimal import Decimal
+from functools import lru_cache
 from pathlib import Path
 from typing import List, Literal, Optional
 
@@ -46,22 +47,23 @@ def run_query(sql, params=()):
 # ---- 공통 필터 -------------------------------------------------------------------------------------------------
 
 class FilterArgs(BaseModel):
-    """식당을 좁히는 정형 조건. 사용자가 말하지 않은 조건은 비워 둔다."""
-    country_code: Optional[str] = Field(None, description="ISO 2자리 국가 코드 (한국 KR, 일본 JP, 프랑스 FR, 스페인 ES, 미국 US, 이탈리아 IT 등). 홍콩은 HK지만 '홍콩식'은 query에 쓴다")
+    """식당을 좁히는 정형 조건. 사용자가 직접 말한 조건만 채우고, 말하지 않은 조건은 절대 추측해서 넣지 않는다(특히 country_code·region)."""
+    country_code: Optional[str] = Field(None, description="ISO 2자리 국가 코드 (사용자가 나라를 말했을 때만. 한국 KR, 일본 JP, 프랑스 FR, 스페인 ES, 미국 US, 이탈리아 IT 등). 홍콩은 HK지만 '홍콩식'은 query에 쓴다")
     exclude_country_code: Optional[str] = Field(None, description="이 국가는 뺀다. '해외'·'한국 말고'는 KR")
-    region: Optional[str] = Field(None, description="국내 지역명(서울, 마포구, 연남동, 부산 등). 시/구/동 어느 단계든 된다. 해외 도시나 'OO역 근처'는 쓰지 말고 geocode_place + near_lat/near_lng를 쓴다")
+    region: Optional[str] = Field(None, description="국내 지역명(서울, 마포구, 연남동, 부산 등). 시/구/동 어느 단계든 된다. 해외 도시나 'OO역 근처'에는 쓰지 말고 city를 쓴다")
+    city: Optional[str] = Field(None, description="해외 도시나 역·랜드마크 이름(파리, 도쿄, 삿포로, 바르셀로나, 강남역, 오도리 공원). 사용자가 말한 지명 그대로 쓴다(강남역을 강남으로 줄이지 않는다). 도구가 좌표를 조회해 반경 검색한다. 도시를 말했으면 country_code가 아니라 이것을 쓴다")
     michelin: Optional[List[Literal["BIB_GOURMAND", "1_STAR", "2_STARS", "3_STARS", "SELECTED"]]] = Field(None, description="미슐랭 등급 목록. '미슐랭 스타'는 [1_STAR,2_STARS,3_STARS], '미슐랭'만 말하면 전체 5개")
-    min_price_level: Optional[int] = Field(None, ge=0, le=4, description="가격대 하한 (0 무료 ~ 4 매우 비쌈, Google 기준)")
-    max_price_level: Optional[int] = Field(None, ge=0, le=4, description="가격대 상한. 저렴한 곳은 2 이하, 고급은 3 이상")
+    min_price_level: Optional[int] = Field(None, ge=0, le=4, description="가격대 하한 (0 무료 ~ 4 매우 비쌈, Google 기준). 비싼·고급·럭셔리는 3")
+    max_price_level: Optional[int] = Field(None, ge=0, le=4, description="가격대 상한. 저렴한 곳은 2")
     min_rating: Optional[float] = Field(None, ge=0, le=5, description="Google 평점 하한")
-    cuisine: Optional[str] = Field(None, description="음식 분류 키워드(한식, 일식, 오마카세, 파인다이닝, 라멘 등). 대분류·세부 분류·태그에서 찾는다")
+    cuisine: Optional[str] = Field(None, description="대분류 한식·일식·중식·양식 중 하나만(그 외 파인다이닝·오마카세·라멘·분위기 같은 스타일은 recommend_by_taste의 query에 쓴다). 대분류·세부 분류·태그에서 찾는다")
     has_chef: Optional[bool] = Field(None, description="True면 대표 셰프 정보가 있는 식당만")
     course_only: Optional[bool] = Field(None, description="True면 코스 요리 식당만")
     open_day: Optional[int] = Field(None, ge=0, le=6, description="영업 요일 (0=일, 1=월 ... 6=토). open_time과 함께 쓴다")
     open_time: Optional[str] = Field(None, description="'HH:MM' (식당 현지 시간). 이 요일·시각에 영업 중인 식당만. 휴무 요일 자체를 물으면 open_time은 '12:00'처럼 낮 시간을 준다")
     near_lat: Optional[float] = Field(None, description="반경 검색 기준 위도 (geocode_place 결과)")
     near_lng: Optional[float] = Field(None, description="반경 검색 기준 경도")
-    radius_km: float = Field(2.0, gt=0, le=50, description="near_lat/near_lng 기준 반경(km)")
+    radius_km: Optional[float] = Field(None, gt=0, le=50, description="city·near_lat/near_lng 기준 반경(km). 비우면 도시는 20km, 역·랜드마크는 2km")
 
 
 # 좌표 간 거리(km). 파라미터 순서: lat, lng, lat
@@ -102,7 +104,7 @@ def build_where(f: FilterArgs):
                  "OR (h.close_time <= h.open_time AND (%s::time >= h.open_time OR %s::time < h.close_time))))")
         p += [f.open_day, *([f.open_time] * 4)]
     if f.near_lat is not None and f.near_lng is not None:
-        c.append(f"{DIST_SQL} <= %s"); p += [f.near_lat, f.near_lng, f.near_lat, f.radius_km]
+        c.append(f"{DIST_SQL} <= %s"); p += [f.near_lat, f.near_lng, f.near_lat, f.radius_km or 2.0]
     return " AND ".join(c), p
 
 
@@ -141,9 +143,11 @@ class FindArgs(FilterArgs):
 
 @tool(args_schema=FindArgs)
 def find_restaurants(sort_by: str = "rating", limit: int = 5, **filters) -> str:
-    """정형 조건(국가·지역·미슐랭·가격대·평점·음식 분류·영업 요일/시간·좌표 반경)만으로 식당을 찾는다. 분위기·메뉴 같은 취향 조건이 없는 질문에 쓴다.
+    """정형 조건(국가·지역·미슐랭·가격대·평점·음식 분류·영업 요일/시간·좌표 반경)만으로 식당을 찾는다. 분위기·메뉴·스타일(파인다이닝, 아늑한 등) 같은 취향 표현이 없는 질문에만 쓴다.
     취향 조건이 있으면 recommend_by_taste를 쓴다."""
     f = FilterArgs(**filters)
+    if err := resolve_city(f):
+        return err
     where, params = build_where(f)
     order = {"rating": "r.rating DESC NULLS LAST, r.rating_count DESC NULLS LAST",
              "price_low": "r.price_level ASC NULLS LAST, r.rating DESC NULLS LAST",
@@ -173,6 +177,10 @@ def recommend_by_taste(query: str, chunk_type: Optional[str] = None, **filters) 
     """취향·분위기·메뉴·셰프 경력처럼 비정형 조건으로 식당을 추천한다. 지역·미슐랭·가격대 같은 정형 조건은 먼저 SQL로 좁히고,
     그 안에서 영상 분석 청크를 벡터 검색한 뒤 LLM이 질문 충족 여부를 확인한다. 맞는 식당이 없으면 빈 목록이 온다."""
     f = FilterArgs(**filters)
+    if err := resolve_city(f):
+        return err
+    if f.cuisine:   # 음식 스타일은 벡터 검색어에 합친다(분류 칼럼으로 거르면 표기가 달라 후보가 사라진다)
+        query, f.cuisine = f"{f.cuisine} {query}", None
     where, params = build_where(f)
     # candidates()의 SQL은 where 조각을 그대로 붙이므로, near 조건의 파라미터 순서는 build_where와 같다
     hits = rs.search(query, where, params, chunk_type)
@@ -222,25 +230,47 @@ def hours_text(rows):
     return {DAY_NAMES[d]: ", ".join(v) for d, v in sorted(days.items())} or "영업시간 정보 없음"
 
 
-@tool
-def geocode_place(place: str) -> str:
-    """지명·역·랜드마크('연남동', '강남역', '파리', '삿포로 오도리 공원')의 좌표를 조회한다. 결과의 lat/lng를
-    find_restaurants·recommend_by_taste의 near_lat/near_lng에 넣어 반경 검색한다. 해외 지명이나 'OO역 근처' 질문에 쓴다 (Google Places 호출 1회)."""
+AREA_TYPES = {"locality", "administrative_area_level_1", "administrative_area_level_2", "country"}
+
+
+@lru_cache(maxsize=256)
+def geocode(place: str) -> dict:
+    """Places Text Search로 좌표를 조회한다(같은 지명은 캐시). 실패하면 {"error": ...}."""
     key = os.environ.get("GOOGLE_PLACES_API_KEY")
     if not key:
-        return dumps({"error": "GOOGLE_PLACES_API_KEY가 없어 좌표를 조회할 수 없습니다"})
+        return {"error": "GOOGLE_PLACES_API_KEY가 없어 좌표를 조회할 수 없습니다"}
     r = requests.post("https://places.googleapis.com/v1/places:searchText", timeout=15,
-                      headers={"X-Goog-Api-Key": key, "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.location",
+                      headers={"X-Goog-Api-Key": key, "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.location,places.types",
                                "Content-Type": "application/json"},
                       json={"textQuery": place, "languageCode": "ko", "pageSize": 1})
     if r.status_code != 200:
-        return dumps({"error": f"Places 호출 실패 ({r.status_code})"})
+        return {"error": f"Places 호출 실패 ({r.status_code})"}
     places = r.json().get("places") or []
     if not places:
-        return dumps({"error": f"'{place}'의 위치를 찾지 못했습니다"})
+        return {"error": f"'{place}'의 위치를 찾지 못했습니다"}
     p = places[0]
-    return dumps({"name": p["displayName"]["text"], "address": p.get("formattedAddress"),
-                  "lat": p["location"]["latitude"], "lng": p["location"]["longitude"]})
+    return {"name": p["displayName"]["text"], "address": p.get("formattedAddress"), "lat": p["location"]["latitude"],
+            "lng": p["location"]["longitude"], "is_area": bool(AREA_TYPES & set(p.get("types", [])))}
 
 
-TOOLS = [find_restaurants, recommend_by_taste, get_restaurant_info, geocode_place]
+def resolve_city(f: FilterArgs):
+    """f.city가 있으면 좌표로 바꿔 near_lat/near_lng/radius_km를 채운다(모델이 geocode 도구를 따로 부르지 않아도 된다). 실패하면 오류 JSON."""
+    if not f.city or f.near_lat is not None:
+        return None
+    g = geocode(f.city)
+    if "error" in g:
+        return dumps(g)
+    f.near_lat, f.near_lng = g["lat"], g["lng"]
+    if f.radius_km is None:
+        f.radius_km = 20.0 if g["is_area"] else 2.0
+    return None
+
+
+@tool
+def geocode_place(place: str) -> str:
+    """지명·역·랜드마크의 좌표만 알고 싶을 때 쓴다. 식당 검색에는 find_restaurants·recommend_by_taste의 city 인자를 쓰면 좌표 조회가 자동으로 된다 (Google Places 호출 1회)."""
+    g = geocode(place)
+    return dumps({k: v for k, v in g.items() if k != "is_area"})
+
+
+TOOLS = [find_restaurants, recommend_by_taste, get_restaurant_info]   # geocode_place는 city 인자가 대신하므로 모델에 노출하지 않는다

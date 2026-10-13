@@ -1,6 +1,7 @@
 """맛집 추천 챗봇 그래프: 모델 노드 <-> 도구 노드를 도구 호출이 없을 때까지 반복하는 ReAct 구조."""
 from dotenv import find_dotenv, load_dotenv
-from langchain_core.messages import SystemMessage
+from pydantic import BaseModel
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -14,11 +15,12 @@ CHAT_MODEL = "gpt-4o-mini"
 SYSTEM_PROMPT = """너는 미식 유튜브 영상(약 120개 식당)을 바탕으로 맛집을 추천하는 챗봇이다. 한국어로, 친근하지만 간결하게 답한다.
 
 ## 일하는 순서
-맛집을 묻는 모든 질문은 되묻지 말고 반드시 도구부터 호출한다(인사·범위 밖 질문만 도구 없이 답한다).
-1. 질문에서 정형 조건(국가·지역·미슐랭·가격대·평점·영업 요일/시간·음식 분류)을 먼저 뽑아 도구 인자로 넣는다.
+맛집을 묻는 모든 질문은 되묻지 말고 먼저 검색 도구를 호출한다.
+사용자가 말하지 않은 조건(국가, 지역, 가격 등)은 도구 인자에 절대 넣지 않는다. "서울 말고"·"해외"처럼 말한 것만 쓴다.
+1. 질문에서 정형 조건(국가·지역·미슐랭·가격대·평점·영업 요일/시간·음식 분류)을 먼저 뽑아 도구 인자로 넣는다. 셰프의 경력·출연·수상(예: 흑백요리사에 나온 셰프)은 has_chef 필터로 찾지 말고 recommend_by_taste(chunk_type=CHEF)로 찾는다. has_chef는 "셰프 정보가 있는 식당" 목록을 물을 때만 쓴다.
 2. 정형 조건만 있으면 find_restaurants, 분위기·메뉴·음식 스타일·셰프 경력 같은 취향이 있으면 recommend_by_taste(정형 조건으로 먼저 좁힌 뒤 벡터 검색)를 쓴다.
 3. 특정 식당의 메뉴·영업시간·상세는 get_restaurant_info로 조회한다.
-4. 해외 도시나 "OO역 근처"는 geocode_place로 좌표를 구해 near_lat/near_lng(+radius_km)로 검색한다. 국내 시·구·동은 region을 쓴다.
+4. 해외 도시(파리·도쿄·삿포로·바르셀로나 등)나 "OO역 근처"는 country_code가 아니라 city 인자에 지명을 넣는다(좌표 조회와 반경 검색은 도구가 한다). 국가 이름(프랑스, 일본)만 말했을 때 country_code를 쓴다. 국내 시·구·동은 region을 쓴다.
 5. 지역·가격 같은 조건이 없는 취향 질문(예: "바삭한 음식 맛집")도 필터 없이 recommend_by_taste로 전체에서 찾고, 답변 끝에 좁힐 조건을 제안한다. 사용자가 위치를 말하지 않은 "근처"·"가까운 곳" 질문만 짧게 되묻는다.
 
 ## 답변 규칙
@@ -32,16 +34,39 @@ SYSTEM_PROMPT = """너는 미식 유튜브 영상(약 120개 식당)을 바탕�
 - 맛집 추천과 무관한 질문에는 정중히 범위를 안내한다."""
 
 
+class Route(BaseModel):
+    restaurant_related: bool   # 식당·음식·메뉴·셰프·미슐랭·영업시간 등 맛집 정보가 필요한 질문이면 True
+
+
+ROUTER_PROMPT = ("사용자의 마지막 말이 맛집 추천 챗봇이 DB(식당, 메뉴, 셰프, 미슐랭, 영업시간)를 검색해야 하는 질문인지 판단한다. "
+                 "식당·음식·메뉴·지역별 맛집·셰프·미슐랭·가격·영업시간에 관한 질문, 이전 추천에 대한 후속 질문('그중 싼 곳은?')은 True. "
+                 "인사, 챗봇 사용법, 날씨·뉴스 같은 맛집과 무관한 말은 False.")
+
+
 def build_graph(checkpointer=None):
-    model = ChatOpenAI(model=CHAT_MODEL, temperature=0).bind_tools(TOOLS)
+    llm = ChatOpenAI(model=CHAT_MODEL, temperature=0)
+    router = llm.with_structured_output(Route)
+    free = llm.bind_tools(TOOLS)
+    forced = llm.bind_tools(TOOLS, tool_choice="required")   # 맛집 질문의 첫 호출은 반드시 도구를 고르게 한다(모호해도 되묻지 않고 검색)
+
+    def route(state: MessagesState):
+        recent = state["messages"][-6:]
+        r = router.invoke([SystemMessage(ROUTER_PROMPT), *recent])
+        return "agent" if r.restaurant_related else "chat"
 
     def call_model(state: MessagesState):
-        return {"messages": [model.invoke([SystemMessage(SYSTEM_PROMPT), *state["messages"]])]}
+        first = isinstance(state["messages"][-1], HumanMessage)
+        return {"messages": [(forced if first else free).invoke([SystemMessage(SYSTEM_PROMPT), *state["messages"]])]}
+
+    def chat(state: MessagesState):
+        return {"messages": [llm.invoke([SystemMessage(SYSTEM_PROMPT + "\n\n이번 말은 검색이 필요 없다. 인사에는 인사하고, 할 수 있는 일(지역·미슐랭·가격대·메뉴·분위기별 맛집 추천, 식당 정보 조회)을 짧게 안내한다."), *state["messages"]])]}
 
     builder = StateGraph(MessagesState)
     builder.add_node("agent", call_model)
+    builder.add_node("chat", chat)
     builder.add_node("tools", ToolNode(TOOLS))
-    builder.add_edge(START, "agent")
+    builder.add_conditional_edges(START, route)
     builder.add_conditional_edges("agent", tools_condition)   # 도구 호출이 있으면 tools, 없으면 END
     builder.add_edge("tools", "agent")
+    builder.add_edge("chat", END)
     return builder.compile(checkpointer=checkpointer)

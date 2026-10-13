@@ -32,7 +32,7 @@
 sesac-final-project/
 ├── src/
 │   ├── app.py                          # LangGraph 엔트리포인트 (chatbot.graph.build_graph)
-│   ├── chatbot/                        # 챗봇 에이전트: graph.py(ReAct 그래프+시스템 프롬프트), tools.py(find_restaurants·recommend_by_taste·get_restaurant_info·geocode_place), cli.py(터미널 대화)
+│   ├── chatbot/                        # 챗봇 에이전트: graph.py(ReAct 그래프+시스템 프롬프트), tools.py(find_restaurants·recommend_by_taste·get_restaurant_info·geocode_place), cli.py(터미널 대화), eval/(평가셋 cases.py + run_eval.py)
 │   ├── pipeline/                       # 데이터 수집 파이프라인
 │   │   ├── common.py                   # 자막 추출 단계의 공통 코드(셰프 추출 chefs_for_store 포함): 경로·모델·OpenAI 클라이언트, load_stores, 시각 보정(fix_times), 평가어 제거(strip_generic), 영상 구간 나누기(video_parts), 코스 판단(detect_course), 음식 분류(classify_cuisine)
 │   │   ├── collect_video_urls.py       # 1. 채널 영상 URL 수집 (yt-dlp, 이분 탐색)
@@ -237,6 +237,7 @@ uv run langgraph dev
 - [x] 조회 범위 뷰 `*_in_scope`(현재 120곳)와 챗봇 전용 계정 스크립트 `create_chatbot_role.sql`: 만들어 두었으나 챗봇은 10/13부터 쓰지 않고 원본 테이블을 읽기 전용 계정으로 조회
 - [ ] 자동 생성 자막 영상(약 72개)에 한해 Gemini 영상 분석으로 보강 (`extract_video_notes.py`, 샘플 검증 후 진행)
 - [x] LangGraph 챗봇 1차 구현(10/13): gpt-4o-mini ReAct 에이전트 + 도구 4개(SQL 필터, SQL 후 벡터 검색, 식당 상세, 좌표 조회). `uv run python src/chatbot/cli.py --trace "질문"` 또는 `uv run langgraph dev`. 질문 8개로 수동 확인했고 자동 평가셋·대화 기억 검증은 아직 없음
+- [x] 챗봇 평가셋(10/13): `src/chatbot/eval/` 41문항(정형 SQL 19·취향 RAG 12·없는 음식 5·식당 조회 3·잡담 2). 정답은 DB에서 SQL로 계산하고 도구 선택·결과 정확도·근거 없는 식당 언급을 점검한다. `uv run python src/chatbot/eval/run_eval.py [--ids ...] [--kind taste]`, 결과는 `data/eval/`. 첫 실행 51% -> 라우터·도구 강제 호출·국가 추측 금지·`city` 자동 좌표 조회·청크 종류별 후보·판단 프롬프트 보강으로 41/41(3회 연속, 고친 질문으로 잰 점수)
 - [ ] n8n 자동화
 
 ## 알려진 이슈 / TODO
