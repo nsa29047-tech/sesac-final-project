@@ -1,0 +1,391 @@
+{
+  "name": "미슐랭 채우기 (매일)",
+  "nodes": [
+    {
+      "id": "ff27ce0e-2bff-57cb-a571-995cdc8dbf95",
+      "name": "매일 09시",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "41ae4220-2ca0-50ec-bd6f-8b6e8344dfae",
+      "name": "수동 실행",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        160
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "365e96e3-979f-59e5-8ef5-fb30477b36f3",
+      "name": "미슐랭 작업 시작",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PIPELINE_API_URL }}/michelin",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.PIPELINE_API_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"max_calls\": 90}"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "c8261264-5300-5091-ba10-6a1d909d6013",
+      "name": "시작됐나?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        80
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1dccd2d3-b02b-593d-be0f-63562752f939",
+              "leftValue": "={{ $json.started }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9e04698b-ac6b-52d8-a523-f48d5e4fd72c",
+      "name": "2분 대기",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        0
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 120,
+        "unit": "seconds"
+      },
+      "webhookId": "c8281477-ad37-5f1c-8a66-e67f6f186c51"
+    },
+    {
+      "id": "5d7410ee-ed05-5fbf-b6e3-93ba13f1926d",
+      "name": "작업 상태",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.PIPELINE_API_URL }}/job",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.PIPELINE_API_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "8b8de029-95fe-50d4-a750-1b24f68491bc",
+      "name": "아직 실행 중?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1300,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7cf99421-3f0b-5c29-8222-fe58121f44d5",
+              "leftValue": "={{ $json.running }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a81490a1-9362-5d63-8b22-978f3eaa7416",
+      "name": "결과 정리",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// 미슐랭 채우기 작업 결과를 정리한다. 이 노드 뒤에 알림 노드를 연결해 쓴다.\nconst j = $input.first().json;\nconst r = j.result || {};\nconst resolved = r.resolved || [], pending = r.still_pending || [];\nif (resolved.length === 0 && pending.length === 0 && !j.exit_code) return [];   // 바뀐 게 없으면 메일을 보내지 않는다\nreturn [{ json: { resolved, still_pending: pending,\n  subject: `[파이프라인] 미슐랭 채우기: 반영 ${resolved.length}개`,\n  message: `미슐랭 채우기 끝: 반영 ${resolved.length}개` + (pending.length ? `, 아직 대기 ${pending.length}개 (하루 한도, 내일 이어서)` : '') +\n           (j.exit_code ? `\\n⚠️ exit ${j.exit_code}` : '') } }];"
+      }
+    },
+    {
+      "id": "b08924a6-adfb-5bcd-9d56-8b63a2a19d63",
+      "name": "결과 메일",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1820,
+        100
+      ],
+      "parameters": {
+        "fromEmail": "nsa29047@gmail.com",
+        "toEmail": "nsa29047@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.message }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "d073113a-9974-58a4-af5a-141cea1664de",
+      "name": "연결 실패 정리",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        340
+      ],
+      "parameters": {
+        "jsCode": "// API 호출 노드가 연결하지 못했을 때(오류 출력) 메시지를 만든다. 이 노드 뒤에 메일 노드가 있다.\nconst j = $input.first().json;\nconst msg = (j.error && (j.error.message || j.error.description)) || JSON.stringify(j).slice(0, 300);\nreturn [{ json: { subject: `[파이프라인] ❌ API 연결 실패 (${$workflow.name})`,\n  message: `워크플로우 '${$workflow.name}' 가 파이프라인 API 를 호출하지 못했습니다.\\n오류: ${msg}\\n\\n호스트에서 \\`uv run python src/api/pipeline_server.py\\` 가 켜져 있는지 확인하세요. (n8n 컨테이너는 host.docker.internal:8765 로 호출합니다)` } }];"
+      }
+    },
+    {
+      "id": "39c5bd2e-dfe0-5282-a756-b2422507f372",
+      "name": "연결 실패 메일",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        780,
+        340
+      ],
+      "parameters": {
+        "fromEmail": "nsa29047@gmail.com",
+        "toEmail": "nsa29047@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.message }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "c605361e-4e71-5907-a83b-6e454ef2063d",
+      "name": "메모 B",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        260,
+        -260
+      ],
+      "parameters": {
+        "content": "## 미슐랭 채우기\nParse 하루 한도(100회)로 못 채운 식당을 하루 90회까지 채우고, 이미 적재된 영상은 DB에도 반영한다. 호출 사이 12.5초 간격이라 최대 약 20분.\n\n영상 처리 워크플로우와 동시에 돌 수 없다(API가 409). 겹치면 시작되지 않고 다음날 다시 시도한다. 반영된 게 있거나 대기가 남았을 때만 `결과 메일`이 간다(SMTP 자격 증명 선택 필요).",
+        "width": 560,
+        "height": 220
+      }
+    }
+  ],
+  "connections": {
+    "매일 09시": {
+      "main": [
+        [
+          {
+            "node": "미슐랭 작업 시작",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "수동 실행": {
+      "main": [
+        [
+          {
+            "node": "미슐랭 작업 시작",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "미슐랭 작업 시작": {
+      "main": [
+        [
+          {
+            "node": "시작됐나?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "연결 실패 정리",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "시작됐나?": {
+      "main": [
+        [
+          {
+            "node": "2분 대기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2분 대기": {
+      "main": [
+        [
+          {
+            "node": "작업 상태",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "작업 상태": {
+      "main": [
+        [
+          {
+            "node": "아직 실행 중?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "연결 실패 정리",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "아직 실행 중?": {
+      "main": [
+        [
+          {
+            "node": "2분 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "결과 정리",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "결과 정리": {
+      "main": [
+        [
+          {
+            "node": "결과 메일",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "연결 실패 정리": {
+      "main": [
+        [
+          {
+            "node": "연결 실패 메일",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Seoul"
+  }
+}

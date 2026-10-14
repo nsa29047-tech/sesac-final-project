@@ -1,0 +1,23 @@
+# 로컬 n8n. 파이프라인 처리는 호스트의 src/api/pipeline_server.py 가 하고, n8n 은 HTTP 로 호출만 한다.
+# 실행(프로젝트 루트에서):  docker compose -f n8n/docker-compose.yml --env-file .env up -d
+#   --env-file 은 아래 ${PIPELINE_API_TOKEN} 치환에만 쓰인다. .env 의 다른 키(OpenAI 등)는 컨테이너에 들어가지 않는다.
+# 접속: http://localhost:5678  (처음 한 번 owner 계정을 만든다)
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-latest}   # 안정화되면 N8N_VERSION 으로 버전을 고정한다
+    container_name: sesac-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - TZ=Asia/Seoul
+      - GENERIC_TIMEZONE=Asia/Seoul
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false          # 워크플로우에서 {{ $env.PIPELINE_API_TOKEN }} 을 쓰기 위해
+      - PIPELINE_API_URL=http://host.docker.internal:8765
+      - PIPELINE_API_TOKEN=${PIPELINE_API_TOKEN:?.env 에 PIPELINE_API_TOKEN 이 필요합니다}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - n8n_data:/home/node/.n8n
+volumes:
+  n8n_data:

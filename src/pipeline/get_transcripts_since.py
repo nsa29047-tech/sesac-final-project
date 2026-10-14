@@ -151,6 +151,23 @@ def has_timed(vid: str) -> bool:
     return (OUTPUT_DIR / f"{vid}.json").exists()
 
 
+def save_transcript(vid: str, segments: List[dict], meta: dict, known_sources: Optional[set] = None) -> str:
+    """자막을 {vid}.txt / {vid}.json 으로 저장하고 출처를 _sources.csv 에 기록한다. 기존 .txt 는 덮어쓰지 않고 비교 메모만 돌려준다."""
+    lines = [seg["text"] for seg in segments]
+    note = ""
+    if has_text(vid):  # 기존 .txt(예전 Playwright 수집분 등)는 덮어쓰지 않고 새 자막과 얼마나 같은지만 알린다
+        old = set((OUTPUT_DIR / f"{vid}.txt").read_text(encoding="utf-8").splitlines())
+        note = f" (기존 .txt 유지, 새 구간 중 기존 줄과 같은 비율 {sum(t in old for t in lines) / len(lines):.0%})"
+    else:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        (OUTPUT_DIR / f"{vid}.txt").write_text("\n".join(lines), encoding="utf-8")
+    payload = {"video_id": vid, "source": meta["source"], "lang": meta["lang"], "segments": segments}
+    (OUTPUT_DIR / f"{vid}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+    if vid not in (recorded_sources() if known_sources is None else known_sources):
+        append_source(meta)
+    return note
+
+
 def main(since: str, limit: int, dry_run: bool, include_all: bool) -> None:
     targets = select_targets(since)
     if not include_all:
@@ -190,19 +207,9 @@ def main(since: str, limit: int, dry_run: bool, include_all: bool) -> None:
                 print(f"[{idx}/{len(pending)}] {vid} 한국어 자막 없음 (수동 자막 언어: {meta['manual_langs'] or '없음'})")
                 failed.append(vid)
             else:
-                lines = [seg["text"] for seg in segments]
-                note = ""
-                if has_text(vid):  # 기존 .txt(예전 Playwright 수집분 등)는 덮어쓰지 않고 새 자막과 얼마나 같은지만 알린다
-                    old = set((OUTPUT_DIR / f"{vid}.txt").read_text(encoding="utf-8").splitlines())
-                    note = f" (기존 .txt 유지, 새 구간 중 기존 줄과 같은 비율 {sum(t in old for t in lines) / len(lines):.0%})"
-                else:
-                    (OUTPUT_DIR / f"{vid}.txt").write_text("\n".join(lines), encoding="utf-8")
-                payload = {"video_id": vid, "source": meta["source"], "lang": meta["lang"], "segments": segments}
-                (OUTPUT_DIR / f"{vid}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-                if vid not in known_sources:
-                    append_source(meta)
+                note = save_transcript(vid, segments, meta, known_sources)
                 ok[meta["source"]] += 1
-                print(f"[{idx}/{len(pending)}] {vid} {meta['source']}({meta['lang']}) {len(lines)}구간{note}")
+                print(f"[{idx}/{len(pending)}] {vid} {meta['source']}({meta['lang']}) {len(segments)}구간{note}")
             time.sleep(REQUEST_DELAY)
 
     if failed:

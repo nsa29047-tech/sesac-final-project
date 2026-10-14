@@ -45,6 +45,7 @@ sesac-final-project/
 │   │   ├── extract_script_split.py     # 5''''. A/B 분리 추출(A 가게 정보 / B 메뉴·음료·코스 단계 + 코스 판단·셰프 호출), 건별 저장 -> data/video_notes/gpt-4o-mini-script-split-v2/ (2026년), -2025/ (2025년), -2024/ (2024년). 2024년 영상은 환경변수 TARGETS_FILE=data/urls/transcript_targets_20240101.txt 로 대상 목록을 바꿔 실행
 │   │   ├── extract_video_split.py      # 5-a'. 자동 생성 자막 영상용 Gemini 영상 분석(자막은 쓰지 않음). 자막 방식과 같은 필드·같은 JSON 구조로 저장, 결과 후처리는 postprocess_split.py --tag 로 같이 쓴다
 │   │   ├── postprocess_split.py        # 5-b. A/B 분리 결과 후처리(음식 분류 다시 정하기(예전 reclassify_split_cuisine.py), 평가어·가격 문장, 코스 단계 보정, 음료 중복, 식당 이름 셰프 제거), 원본은 *_raw 폴더에 백업
+│   │   ├── process_video.py            # 7. 새 영상 1개를 gate -> places -> michelin_check -> captions -> extract -> postprocess -> load 로 처리(위 스크립트를 --video-id 로 호출, 상태는 video_queue). n8n 자동화의 진입점. 사용법은 3-1
 │   │   ├── get_transcripts_since.py    # 자막 수집 (yt-dlp, 기본 2025-01-01 이후·적재 가능 영상만, --since 로 날짜 변경, 이어받기)
 │   │   └── experiments/                # 실험·보류·미사용 코드. 지금 파이프라인은 import 하지 않음(sys.path로 pipeline 모듈만 가져다 씀)
 │   │       ├── extract_script_notes.py / extract_script_course.py / extract_script_v7.py / extract_script_two_stage.py / compare_prompt_v3.py  # 자막 추출 프롬프트 실험(A/B 분리 이전 방식)
@@ -52,6 +53,8 @@ sesac-final-project/
 │   │       ├── chunk_transcripts.py / extract_transcript_notes.py / check_course_gold.py  # 자막 원문 청킹 실험, 초기 스키마, 코스 점검표
 │   │       ├── extract_chef_info.py  # 셰프 단독 추출(예전 방식, data/chef_notes). 지금은 extract_script_split.py 가 추출 때 함께 뽑음
 │   │       └── probe_price.py / michelin_api_probe.py / save_scripts.py  # 가격대·Parse API 확인용, 옛 자막 수집
+│   ├── api/
+│   │   └── pipeline_server.py          # n8n(Docker)이 호출하는 HTTP API(FastAPI, X-API-Key 인증). process_video.py 를 하위 프로세스로 실행하고 /job 으로 상태를 알려 준다. 사용법은 3-2
 │   └── db/
 │       ├── restaurant_schema.sql       # PostgreSQL 테이블 정의
 │       ├── restaurant_chunks.sql       # RAG 청크 테이블 (pgvector)
@@ -74,6 +77,7 @@ sesac-final-project/
 │       ├── migrate_split_schema.sql    # 마이그레이션(10/8): A/B 분리 결과용. menus.cooking_features->description, taste_review/tips/price_text 삭제, menu_order·course_stage, video_restaurant_notes.is_course·course_name
 │       ├── migrate_price_columns.sql   # 마이그레이션(10/8): restaurants.price_level/price_min/price_max/price_currency
 │       ├── migrate_chef_chunk.sql      # 마이그레이션(10/8): restaurant_chunks에 CHEF 청크 종류 추가
+│       ├── migrate_video_queue.sql     # 마이그레이션(10/14): video_queue(새 영상 자동 처리의 진행 상태). process_video.py init-db 로도 적용
 │       ├── load_prices.py              # enrich_places_details.py --prices 결과 -> restaurants 가격 컬럼
 │       ├── create_scope_views.sql      # 조회 범위 뷰: restaurants_in_scope 등 (자막 분석 노트가 있는 식당만). 챗봇은 현재 쓰지 않음
 │       ├── create_chatbot_role.sql     # 챗봇 전용 DB 계정 스크립트. 현재 쓰지 않음(챗봇은 READONLY_POSTGRES_URI 사용)
@@ -82,6 +86,7 @@ sesac-final-project/
 │       ├── normalize_categories.py     # 이미 적재된 DB의 세부 분류 정리(--dry-run 가능). load_notes.py도 같은 규칙을 쓴다
 │       ├── rag_search.py               # 검색 모듈: SQL 필터 -> 벡터 후보 -> LLM 충족 판단(맞는 결과 없으면 빈 목록)
 │       └── test_rag.py                 # RAG 검색 테스트(12개 질문, 현재 범위 120곳)
+├── n8n/                                # n8n 자동화: docker-compose.yml, build_workflows.py(워크플로우 JSON 생성), workflows/(새 영상 처리·미슐랭 채우기·실패 알림)
 ├── parse_apis/                         # Parse SDK 스캐폴드. 생성 코드는 git 제외(`uv run parse add`로 재생성)
 ├── data/                               # 산출물 (git 제외)
 │   ├── urls/                           # 채널 영상 URL 목록 (원본 / 통과 / 제외)
@@ -134,6 +139,7 @@ sesac-final-project/
 | (`restaurants`의 `region_1~3`) | 지역(시 > 구/군 > 동·면, 최대 3단계, 없는 단계는 건너뛰고 앞에서부터 채움). 별도 테이블 없이 `restaurants` 컬럼으로 저장. 이전에 `regions` 테이블을 쓰던 DB는 `migrate_simplify_schema.sql` 실행(지역 컬럼 이전과 함께 `menus.description`·`is_signature`, `michelin_records`, `michelin_status.edition_type`·`is_active`, `restaurant_hours.is_closed` 제거), 안 쓰는 컬럼 정리는 `migrate_trim_columns.sql` |
 | `restaurant_hours` | 요일별 영업시간 (하루 여러 구간, 자정 넘김 지원). 휴무는 `open_time`/`close_time`이 NULL인 행. |
 | `michelin_status` | 미슐랭 현재 상태 (현재 등재 여부, 등급, 확인 시각) |
+| `video_queue` | 새 영상 자동 처리의 진행 상태(`migrate_video_queue.sql`). `status`(pending/running/loaded/skipped/needs_review/failed), 마지막으로 끝난 `stage`, 자막 종류 `caption_type`, 사유·오류, 미슐랭 대기 `michelin_pending`, 시도 횟수. 챗봇은 조회하지 않는다 |
 | `video_restaurant_mentions` | 영상 ↔ 식당 (N:M), LLM이 추출한 원본 이름·주소 보관 |
 | `menus` | 영상에서 추출한 메뉴/음료 (`description` 설명, 근거 `evidence`, 영상 속 순서 `menu_order`, 코스 단계 `course_stage`(참고용, 필터 금지), 메뉴 시각 `mentioned_sec`(영상 분석은 화면 첫 등장, 자막 분석은 자막 시각 추정 — 한 칸으로 통합)). 맛 평가·팁·가격은 저장하지 않음 |
 | `restaurant_tags` | 음식 검색용 태그 (티본 스테이크, 스시 등) |
@@ -170,7 +176,56 @@ uv run parse add --marketplace guide-michelin-com-api
 | `GEMINI_API_KEY` | Gemini API. 자동 생성 자막 영상을 직접 분석할 때 사용(`extract_video_split.py`). 무료 등급은 YouTube 영상을 하루 8시간까지만 받는다 |
 | `POSTGRES_URI` | PostgreSQL 접속 문자열 |
 | `READONLY_POSTGRES_URI` | 읽기 전용 계정(`create_readonly_role.sql`) 접속 문자열. 챗봇(`src/chatbot`)과 `rag_search.py`가 원본 테이블 조회에 쓴다. **없으면 챗봇이 실행되지 않는다**(관리자 계정 `POSTGRES_URI`로 대신 접속하지 않음). 적재·정리 스크립트는 `POSTGRES_URI`를 쓴다 |
+| `PIPELINE_API_TOKEN` | `src/api/pipeline_server.py`(n8n이 호출하는 파이프라인 HTTP API)의 `X-API-Key` 값. 긴 무작위 문자열. 없으면 서버가 시작되지 않는다. n8n 컨테이너에는 `docker-compose.yml`이 이 값만 넘긴다 |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT` | LangSmith 트레이싱 |
+
+### 3-1. 새 영상 자동 처리 (`process_video.py`, n8n 연동용)
+
+영상 1개를 위 1~6단계에 해당하는 스크립트를 `--video-id`로 차례로 호출해 DB 적재까지 처리합니다. 진행 상태는 DB `video_queue`(`migrate_video_queue.sql`)에 기록하고, 단계는 `gate`(제목·소개란 LLM 판단: 식당 영상인지, 중국 본토 식당만 나오는지) → `places`(가게 추출·Places·미슐랭) → `michelin_check`(제목에 미쉐린·미슐랭·N스타가 있는데 Parse가 전부 NONE이면 표기 차이로 놓친 것일 수 있어 `needs_review`) → `captions`(자막 종류 확인) → `extract`(제작자 자막이면 자막 분석, 자동 생성 자막·자막 없음이면 Gemini 영상 분석) → `postprocess` → `load`입니다. 멈춘 영상은 같은 명령으로 끝난 단계 다음부터 이어서 처리합니다. 상태는 `pending / running / loaded / skipped(대상 아님) / needs_review(사람 확인: Places 매칭 실패, 메뉴 없음) / failed(재시도 가능)`이고, 명령 출력은 마지막 JSON 한 덩어리라 n8n이 그대로 파싱할 수 있습니다.
+
+```bash
+uv run python src/pipeline/process_video.py init-db                  # video_queue 테이블 생성 (한 번)
+uv run python src/pipeline/process_video.py discover --dry-run       # 채널 최신 영상 중 처리한 적 없는 영상 확인
+uv run python src/pipeline/process_video.py run VIDEO_ID --stop-after places   # 단계별 검증
+uv run python src/pipeline/process_video.py run --next 3             # 대기·실패 영상 3개 처리
+uv run python src/pipeline/process_video.py status                   # 상태별 건수, needs_review·failed 목록
+uv run python src/pipeline/process_video.py reset VIDEO_ID           # 확인 후 needs_review·failed를 다시 대기로 (--skip 사유로 제외)
+#   reset VIDEO_ID --accept   # needs_review를 사람이 확인해 문제없다고 보고 다음 단계부터 진행 (예: 미슐랭 NONE이 맞는 경우)
+uv run python src/pipeline/process_video.py michelin                 # Parse 한도로 못 채운 미슐랭을 채워 DB에 반영
+```
+
+한 번에 한 영상만 처리합니다(잠금 파일 `data/.process_video.lock`, 이미 실행 중이면 종료 코드 75와 `status: busy`). 결과 JSON은 임시 폴더 `data/video_notes/*-live`에 쌓였다가 적재 후 `_live_archive/{video_id}/`로 옮겨지고, 단계별 로그는 `data/logs/process_video/{video_id}.log`에 남습니다.
+
+### 3-2. n8n 자동화 (로컬 Docker)
+
+n8n 컨테이너 안에는 이 프로젝트의 Python 환경(uv, `.venv`, 키, `data/`)이 없으므로 **처리는 호스트의 HTTP API가, n8n은 호출만** 합니다. `process_video.py`의 처리 로직은 그대로이고 API는 얇은 래퍼입니다.
+
+```
+n8n (Docker, :5678) ──HTTP X-API-Key──▶ host.docker.internal:8765  src/api/pipeline_server.py ──▶ process_video.py ──▶ 기존 단계 스크립트
+```
+
+```bash
+uv run python src/api/pipeline_server.py                                 # 1) 호스트에서 API 실행 (127.0.0.1:8765)
+docker compose -f n8n/docker-compose.yml --env-file .env up -d           # 2) n8n 실행 -> http://localhost:5678 (owner 계정 생성)
+uv run python n8n/build_workflows.py                                     # (워크플로우 JSON 다시 만들 때)
+```
+
+3) n8n에서 `Workflows → Import from File`로 `n8n/workflows/new_video_pipeline.json`(6시간마다 `discover` → 영상을 하나씩 처리 → 끝나면 요약)과 `fill_michelin_daily.json`(매일 09시 미슐랭 채우기)을 가져옵니다. 알림은 메일(Send Email 노드)로 가며, 가져온 뒤 메일 노드 3개(`영상 결과 메일`·`요약 메일`·`결과 메일`)에 SMTP 자격 증명을 선택해야 합니다(받는 주소는 `n8n/build_workflows.py`의 `NOTIFY_TO`). 영상 하나가 끝날 때마다, 한 바퀴 끝에 확인할 영상(needs_review·failed·미슐랭 대기)이 있을 때만, 미슐랭에 변화가 있을 때만 메일이 갑니다.
+
+**실패 알림**: 두 워크플로우의 API 호출 노드는 연결 거부·시간 초과 같은 오류를 두 번째 출력(오류 출력)으로 내보내고, `연결 실패 정리` → `연결 실패 메일`이 "호스트에서 `pipeline_server.py`가 켜져 있는지 확인" 안내와 함께 메일을 보냅니다(Error Workflow 설정 없이 동작). HTTP 오류(예: 토큰 불일치 401)는 노드 오류로 잡히지 않게 해 두었고 `요약` 노드가 `API 호출 실패` 메일로 알립니다. `n8n/workflows/error_alert.json`(`실패 알림`)은 그 밖의 예기치 못한 노드 오류용 Error Workflow이며, 가져온 n8n 버전에서 설정 드롭다운에 회색으로 나오면(선택 불가) 쓰지 않아도 됩니다. n8n·PC가 꺼져 있으면 스케줄 자체가 돌지 않아 알림도 없습니다.
+
+`host.docker.internal`로 닿지 않으면 API를 `--host 0.0.0.0`으로 띄웁니다(같은 네트워크에 열리므로 토큰을 꼭 쓰고 방화벽을 확인).
+
+| 엔드포인트 | 설명 |
+|---|---|
+| `POST /discover` | 채널의 새 영상을 큐에 넣는다 (`dry_run`으로 확인만) |
+| `POST /run` | 영상 하나 처리 작업 시작(202). `video_id` 없으면 대기·실패(시도 3회 미만) 영상 중 가장 오래된 것. 처리할 게 없으면 `started:false` |
+| `POST /michelin` | 못 채운 미슐랭 채우기 작업 시작(202) |
+| `GET /job` | 현재/마지막 작업. `running:false`가 되면 `result`에 결과 JSON |
+| `GET /status`, `GET /videos/{id}` | 상태별 건수와 확인이 필요한 영상 / 영상 하나의 상태 |
+| `POST /videos/{id}/reset` | `needs_review`·`failed`를 사람이 확인한 뒤 되돌린다 (`accept` / `skip` / `redo_from`) |
+
+작업은 한 번에 하나만 돌고(이미 실행 중이거나 CLI가 잠금 중이면 409), 영상 처리 중에 미슐랭 작업을 시작할 수 없습니다. 영상 하나는 수동 자막 약 3분, 자동 자막(Gemini) 약 15분이므로 n8n은 시작 후 60초마다 `GET /job`을 확인합니다.
 
 ### 3. 파이프라인 실행
 
@@ -250,7 +305,8 @@ uv run langgraph dev
 - [x] Streamlit 챗봇 UI(10/13): `uv run streamlit run src/streamlit_app.py`. 토큰 단위 스트리밍, 도구 호출 진행 표시, 대화 기억(thread_id), 예시 질문·새 대화 버튼. 추천 식당은 맛집 앱 스타일 카드로 표시(영상 썸네일, 미슐랭 배지, 평점·가격대, 셰프, 영상·지도 버튼, 검색에 걸린 메뉴 설명). 카드는 LLM 글이 아니라 도구 결과(JSON)로 그리고(`src/chatbot/cards.py`), 그래프는 `build_graph(cards=True)`로 본문을 요약·추천 이유만 쓰게 한다. 테마는 `.streamlit/config.toml`
 - [x] 추천 결과 지도(10/13): 카드 위에 번호 마커 지도(Leaflet + OpenStreetMap, `src/chatbot/maps.py`), 마커 말풍선에 이름·평점·미슐랭·영상/지도 링크. 상세 팝업에도 그 식당 위치 지도
 - [x] 식당 상세 팝업(10/13): 카드의 "상세 정보 보기"를 누르면 `st.dialog`로 한 식당의 정보를 한눈에 보여 준다(`src/chatbot/detail.py` + `streamlit_app.py`). 영상 속 메뉴 타임라인(앱 안에서 유튜브 영상을 바로 재생하고, 메뉴를 누르면 그 시각으로 이동해 재생하며 재생 중인 메뉴를 강조. 유튜브 IFrame API를 `components.html`로 임베드, 임베드가 막힌 영상은 "YouTube에서 보기" 링크로 대체. 코스 단계·조리 특징 설명), 영상 소개(컨셉·분위기·키포인트·총평), 음료, 기본 정보(주소·전화·가격·영업시간·웹사이트·지도). 메뉴별 맛 후기는 저장하지 않아 조리 특징만 보여 준다
-- [ ] n8n 자동화
+- [x] n8n 자동화 1차(10/14): `process_video.py`(영상 1개를 gate -> places -> michelin_check -> captions -> extract -> postprocess -> load, 상태 `video_queue`), `src/api/pipeline_server.py`(n8n이 호출하는 HTTP API), `n8n/`(로컬 Docker, 워크플로우: 새 영상 6시간마다 처리·미슐랭 매일 채우기). 수동 자막 영상 2개와 자동 자막 영상 1개를 gate부터 DB 적재까지 처리해 확인했고 n8n 수동 실행·메일 알림·API 서버 다운 시 실패 알림도 확인했다. 사용법은 3-1, 3-2
+- [ ] n8n 스케줄 워크플로우 활성화(켜려면 호스트의 `pipeline_server.py`와 Docker가 계속 켜져 있어야 함), 자동 자막(Gemini) 경로를 n8n에서 실행해 확인(영상당 약 15분)
 
 ## 알려진 이슈 / TODO
 
