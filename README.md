@@ -89,6 +89,7 @@ sesac-final-project/
 │       ├── rag_search.py               # 검색 모듈: SQL 필터 -> 벡터 후보 -> LLM 충족 판단(맞는 결과 없으면 빈 목록)
 │       └── test_rag.py                 # RAG 검색 테스트(12개 질문, 현재 범위 120곳)
 ├── n8n/                                # n8n 자동화: docker-compose.yml, build_workflows.py(워크플로우 JSON 생성), workflows/(새 영상 처리·미슐랭 채우기·실패 알림)
+├── web/                                # Next.js 화면(10/14, 설계 CHATBOT_API_DESIGN.md 단계 2): 채팅(SSE 스트리밍), 식당 카드, 번호 마커 지도. 챗봇 API(src/api/chat_server.py)를 호출. 실행은 web/README.md, 5-2
 ├── parse_apis/                         # Parse SDK 스캐폴드. 생성 코드는 git 제외(`uv run parse add`로 재생성)
 ├── data/                               # 산출물 (git 제외)
 │   ├── urls/                           # 채널 영상 URL 목록 (원본 / 통과 / 제외)
@@ -299,6 +300,17 @@ uv run python src/chatbot/test_serialize.py       # 변환 계층 시험 5개
 | `GET /api/health` | 서버·DB 확인 |
 
 로컬 데모용입니다: 127.0.0.1에만 열고 CORS는 `http://localhost:3000`만 허용합니다(`CHAT_ALLOWED_ORIGINS`로 변경). 인증·요청 제한은 없으니 외부에 공개하려면 추가해야 합니다. 서버는 읽기 전용 계정(`READONLY_POSTGRES_URI`)으로만 DB에 접속하고(쓰기 권한 `POSTGRES_URI`는 프로세스 환경에서 지웁니다), 연결 풀을 씁니다. 대화 기억은 서버 메모리라 재시작하면 사라지고, 같은 대화에서 동시에 두 질문을 보내면 409입니다. 질문은 500자, 응답은 60초로 제한합니다. 브라우저가 연결을 끊으면 그래프 실행을 멈춥니다.
+
+
+### 5-2. Next.js 화면 (`web/`, 로컬 데모)
+
+```bash
+uv run python src/api/chat_server.py     # 챗봇 API (127.0.0.1:8000)
+npm --prefix web install                  # 처음 한 번
+npm --prefix web run dev                  # http://localhost:3000
+```
+
+Next.js 16(App Router) + Tailwind CSS 4 + react-leaflet. 질문을 보내면 도구 호출 진행("조건에 맞는 식당 찾는 중…")과 답변이 스트리밍되고, 답변이 끝나면 번호 마커 지도와 식당 카드가 나옵니다(카드 번호 = 마커 번호). 서버가 꺼져 있거나 연결이 끊기면 안내 문구를 보여 주고 다시 보낼 수 있습니다. 자세한 구조와 알려진 점은 `web/README.md`. 식당 상세 팝업(영상 재생·타임라인)은 아직 없습니다(단계 3).
 
 
 ## 진행 상황

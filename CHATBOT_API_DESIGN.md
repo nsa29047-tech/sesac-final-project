@@ -197,7 +197,7 @@ DB 행과 도구 결과(LLM이 보는 JSON)를 위 형식으로 바꾸는 곳이
 |---|---|---|
 | 0 (완료 10/14) | `schemas.py`, `serialize.py` 작성, `test_serialize.py`로 시험(단위 4 + 실제 데이터 1). `tools.py`·`summarize()`는 수정하지 않아 LLM 입력이 그대로이므로 평가셋은 다시 돌리지 않았다 | `uv run python src/chatbot/test_serialize.py` 5/5 통과 |
 | 1 (완료 10/14) | `chat_server.py`: `/api/chat`(SSE), `/api/restaurants/{id}`, `/api/health`, 연결 풀(`rag_search.enable_pool`), 연결 끊김 취소, 같은 대화 동시 요청 409, CORS, 입력·시간 제한 | `smoke_chat_api.py` 13/13, 서로 다른 대화 4개 동시 요청 시험 통과 |
-| 2 | Next.js(`web/`): 채팅 화면, 스트리밍 표시, 카드, 지도(react-leaflet), BFF Route Handler | 브라우저에서 예시 질문 6개 |
+| 2 (완료 10/14) | Next.js(`web/`): 채팅 화면, SSE 스트리밍 표시, 도구 호출 진행, 카드, 지도(react-leaflet). BFF는 로컬 데모라 생략 | 브라우저에서 예시 질문, 후속 질문(대화 기억), 서버 꺼짐 오류 화면 확인 |
 | 3 | 상세 팝업: 유튜브 IFrame API 플레이어 + 메뉴 타임라인(누르면 `seekTo`), 영업시간, 마커 클릭으로 상세 열기 | Streamlit 팝업과 같은 정보가 나오는지 |
 | 4 | (로컬 데모에서는 생략) 요청 제한, 기억 정리, PostgreSQL 체크포인터, 배포. 대신 오류 화면(서버 꺼짐, 시간 초과)과 `127.0.0.1`·CORS 설정만 확인 | 서버를 끄고 화면이 오류를 보여 주는지 |
 
