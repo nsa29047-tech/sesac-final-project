@@ -513,6 +513,7 @@
 - **`n8n/`**: `docker-compose.yml`(`.env`에서 토큰만 컨테이너에 전달), `build_workflows.py`가 만드는 워크플로우 3개 - 새 영상 처리(6시간마다 discover -> 영상 하나씩 처리), 미슐랭 채우기(매일 09시), 실패 알림(Error Trigger). 알림은 메일(Gmail 앱 비밀번호 SMTP): 영상 결과, 확인할 영상이 있을 때만 요약, 미슐랭에 변화가 있을 때만 결과.
 - **실패 알림**: API 호출 노드의 오류 출력을 `연결 실패 메일`로 연결해 API 서버가 꺼졌을 때 알린다(401 등 HTTP 오류는 `요약` 노드가 알림). 실패 알림 Error Workflow는 이 n8n 버전의 설정 드롭다운에서 회색(선택 불가)이었고 원인은 확인하지 못했다. 서버를 끈 채 n8n에서 수동 실행해 연결 실패 메일 수신을 확인했다.
 - 기존 스크립트 변경은 작다: `get_transcripts_since.save_transcript` 분리, `fill_michelin.py --only-videos`. `fastapi`, `uvicorn` 추가.
+- **미슐랭 미조회 43곳은 이번 달 보류**(사용자 결정): Parse 크레딧이 약 72건 남아 새 영상 자동 처리용으로 보존한다. 크레딧 초기화 후 `fill_michelin.py`로 채운다. 이 식당들은 영상 분석 노트가 없어 취향 검색에는 원래 나오지 않고, "미슐랭" SQL 질문에서만 빠진다.
 - 문서: README(3-1, 3-2, 구조·스키마·진행 상황, 환경변수 `PIPELINE_API_TOKEN`), CLAUDE.md, 이 일지.
 - **DB 정리**: 규칙(중국 본토 제외)과 달리 DB에 남아 있던 CN 식당 14곳을 삭제했다(정형 정보만 있고 노트·메뉴 없음, 백업 `data/backup_20261014_144721/`, 식당 220 -> 206, 영업시간 1,810 -> 1,782, 미슐랭 165 -> 163, 영상 연결 231 -> 217, `videos` 185 유지). 이 중 id 176은 상호가 채널명 "비밀이야"로 잘못 들어간 건이었다. `migrate_merge_menu_time.sql`은 이미 DB에 적용돼 있음을 확인했다(`menus.first_appearance_sec` 없음).
 
