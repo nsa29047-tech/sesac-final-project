@@ -34,7 +34,7 @@ function FitBounds({ pins }: { pins: Pin[] }) {
   return null;
 }
 
-export default function RestaurantMap({ restaurants }: { restaurants: Restaurant[] }) {
+export default function RestaurantMap({ restaurants, onDetail }: { restaurants: Restaurant[]; onDetail?: (r: Restaurant) => void }) {
   // 번호는 카드 번호와 같아야 하므로 좌표가 없는 식당이 있어도 원래 순서를 유지한다
   const pins: Pin[] = restaurants.flatMap((r, i) =>
     r.latitude != null && r.longitude != null ? [{ r, n: i + 1, pos: [r.latitude, r.longitude] as [number, number] }] : [],
@@ -68,6 +68,11 @@ export default function RestaurantMap({ restaurants }: { restaurants: Restaurant
                   </a>
                 )}
               </div>
+              {onDetail && (
+                <button type="button" onClick={() => onDetail(r)} className="mt-2 w-full rounded-full bg-brand py-1.5 text-xs font-bold text-white hover:bg-brand-dark">
+                  상세 정보 보기
+                </button>
+              )}
             </div>
           </Popup>
         </Marker>

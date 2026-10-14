@@ -54,3 +54,33 @@ export function formatPrice(p: { min: number; max: number | null; currency: stri
   const range = p.max ? `${p.min.toLocaleString()}~${p.max.toLocaleString()}` : `${p.min.toLocaleString()}~`;
   return `${p.currency ?? ""} ${range}`.trim();
 }
+
+const DAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
+const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]; // 월 ~ 일
+
+/** 영업시간을 같은 시간이 이어지는 요일끼리 묶는다. [["월–금", "12:00 - 15:00, 18:00 - 22:30"], ["토", "휴무"]] */
+export function hoursGroups(hours: { day: number; closed: boolean; intervals: { open: string; close: string }[] }[]): [string, string][] {
+  const byDay = new Map<number, string>(
+    hours.map((h) => [h.day, h.closed ? "휴무" : h.intervals.map((i) => `${i.open} - ${i.close}`).join(", ")]),
+  );
+  const groups: { days: number[]; text: string | null }[] = [];
+  for (const d of DAY_ORDER) {
+    const text = byDay.get(d) ?? null;
+    const last = groups[groups.length - 1];
+    if (last && last.text === text) last.days.push(d);
+    else groups.push({ days: [d], text });
+  }
+  return groups.map((g) => [
+    g.days.length === 1 ? DAY_NAMES[g.days[0]] : `${DAY_NAMES[g.days[0]]}–${DAY_NAMES[g.days[g.days.length - 1]]}`,
+    g.text ?? "정보 없음",
+  ]);
+}
+
+/** 초 -> "m:ss" 또는 "h:mm:ss". */
+export function formatTime(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  const ss = String(s).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${String(m).padStart(2, "0")}:${ss}`;
+}

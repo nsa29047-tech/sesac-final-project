@@ -9,6 +9,6 @@ const RestaurantMap = dynamic(() => import("./RestaurantMap"), {
   loading: () => <div className="h-80 w-full animate-pulse rounded-2xl bg-stone-200" aria-label="지도 불러오는 중" />,
 });
 
-export default function MapSection({ restaurants }: { restaurants: Restaurant[] }) {
-  return <RestaurantMap restaurants={restaurants} />;
+export default function MapSection({ restaurants, onDetail }: { restaurants: Restaurant[]; onDetail?: (r: Restaurant) => void }) {
+  return <RestaurantMap restaurants={restaurants} onDetail={onDetail} />;
 }

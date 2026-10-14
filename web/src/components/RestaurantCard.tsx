@@ -2,7 +2,7 @@ import type { Restaurant } from "@/lib/types";
 import { formatPrice, michelinBadge, shortRegion } from "@/lib/format";
 
 /** 추천 식당 한 곳의 카드. 번호는 지도 마커 번호와 같다. */
-export default function RestaurantCard({ r, num }: { r: Restaurant; num: number }) {
+export default function RestaurantCard({ r, num, onDetail }: { r: Restaurant; num: number; onDetail?: (r: Restaurant) => void }) {
   const video = r.videos[0];
   const cat = (r.category_detail || r.category_broad || "").trim();
   const sub = [shortRegion(r.region), cat.length > 22 ? cat.slice(0, 21) + "…" : cat].filter(Boolean).join(" · ");
@@ -56,7 +56,16 @@ export default function RestaurantCard({ r, num }: { r: Restaurant; num: number 
           </p>
         )}
 
-        <div className="mt-auto flex gap-2 pt-1.5">
+        {onDetail && (
+          <button
+            type="button"
+            onClick={() => onDetail(r)}
+            className="mt-auto rounded-[10px] border border-neutral-300 bg-white py-1.5 text-[12.5px] font-semibold text-neutral-700 hover:bg-neutral-50"
+          >
+            상세 정보 보기
+          </button>
+        )}
+        <div className={`flex gap-2 ${onDetail ? "" : "mt-auto"} pt-1.5`}>
           {video && (
             <a
               href={video.url}

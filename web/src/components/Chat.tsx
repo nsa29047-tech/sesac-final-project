@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { ApiError, streamChat } from "@/lib/api";
 import { describeCall, stripLinks } from "@/lib/format";
-import type { ChatEvent, ChatMessage } from "@/lib/types";
+import type { ChatEvent, ChatMessage, Restaurant } from "@/lib/types";
+import DetailDialog from "./DetailDialog";
 import MapSection from "./MapSection";
 import RestaurantCard from "./RestaurantCard";
 
@@ -21,6 +22,7 @@ export default function Chat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [detail, setDetail] = useState<Restaurant | null>(null); // 상세 팝업으로 보고 있는 식당
   // 렌더링 중에 난수를 만들면 안 되므로(cacheComponents) 대화 ID 는 첫 질문을 보낼 때 만든다.
   const threadRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -82,6 +84,7 @@ export default function Chat() {
 
   function newChat() {
     abortRef.current?.abort();
+    setDetail(null);
     threadRef.current = null;
     setMessages([]);
     setInput("");
@@ -155,10 +158,10 @@ export default function Chat() {
               )}
               {m.cards.length > 0 && (
                 <>
-                  <MapSection restaurants={m.cards} />
+                  <MapSection restaurants={m.cards} onDetail={setDetail} />
                   <div className="grid gap-3.5 sm:grid-cols-2">
                     {m.cards.map((r, i) => (
-                      <RestaurantCard key={r.restaurant_id} r={r} num={i + 1} />
+                      <RestaurantCard key={r.restaurant_id} r={r} num={i + 1} onDetail={setDetail} />
                     ))}
                   </div>
                 </>
@@ -202,6 +205,7 @@ export default function Chat() {
           </button>
         )}
       </form>
+      <DetailDialog restaurantId={detail?.restaurant_id ?? null} name={detail?.name ?? ""} onClose={() => setDetail(null)} />
     </div>
   );
 }

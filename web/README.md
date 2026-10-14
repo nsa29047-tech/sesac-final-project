@@ -23,7 +23,9 @@ npm --prefix web run dev                   # 3) 화면       http://localhost:30
 |---|---|
 | `src/app/page.tsx`, `layout.tsx` | 서버 컴포넌트. 페이지는 `<Chat />` 만 그린다 |
 | `src/components/Chat.tsx` | 채팅 화면(클라이언트). 질문 전송, SSE 스트리밍 표시, 도구 호출 진행, 중지, 새 대화, 오류 표시 |
-| `src/components/RestaurantCard.tsx` | 추천 식당 카드(썸네일, 미슐랭 배지, 평점, 가격대, 셰프, 영상·지도 링크) |
+| `src/components/RestaurantCard.tsx` | 추천 식당 카드(썸네일, 미슐랭 배지, 평점, 가격대, 셰프, 상세 정보 보기, 영상·지도 링크) |
+| `src/components/DetailDialog.tsx` | 식당 상세 팝업(브라우저 `<dialog>`): 메뉴 타임라인, 영상 속 소개·총평, 음료, 기본 정보(주소·가격·영업시간), 위치 지도. 카드 버튼이나 지도 마커 말풍선의 버튼으로 연다 |
+| `src/components/VideoPlayer.tsx` | 유튜브 IFrame API 플레이어와 메뉴 타임라인. 메뉴를 누르면 그 시각으로 이동해 재생하고 재생 중 현재 메뉴를 강조한다. 플레이어는 스크롤해도 위에 고정 |
 | `src/components/RestaurantMap.tsx`, `MapSection.tsx` | 번호 마커 지도(Leaflet + OpenStreetMap). Leaflet 은 서버 렌더링에서 빼려고 `ssr:false` 로 불러온다 |
 | `src/lib/api.ts` | `streamChat`(fetch + SSE 파서), API 주소 |
 | `src/lib/types.ts` | API 응답 형식(서버 `src/chatbot/schemas.py` 와 맞춤) |
@@ -32,4 +34,4 @@ npm --prefix web run dev                   # 3) 화면       http://localhost:30
 ## 알려진 점
 
 - 대화 ID 는 첫 질문을 보낼 때 만든다(`cacheComponents` 에서는 렌더링 중 난수를 쓸 수 없다). 대화 기록은 저장하지 않아 새로고침하면 사라진다.
-- 식당 상세 팝업(영상 재생 + 메뉴 타임라인, 지도 마커 클릭)은 아직 없다(설계의 단계 3).
+- 상세 팝업의 식당 정보는 한 번 받으면 새로고침 전까지 캐시한다. 영상 화면은 유튜브가 그리므로 외부 영상을 막는 환경(일부 사내망·브라우저 창)에서는 검게 보일 수 있다(재생이 안 되면 `YouTube에서 보기` 링크를 보여 준다).

@@ -1,4 +1,4 @@
-import type { ChatEvent } from "./types";
+import type { ChatEvent, RestaurantDetail } from "./types";
 
 // 챗봇 서버 주소. 빌드할 때 값이 코드에 들어간다(NEXT_PUBLIC_). 바꾸려면 web/.env.local 에 설정하고 다시 빌드·재시작한다.
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -74,4 +74,18 @@ export async function streamChat(
     if (signal.aborted) return;
     throw new ApiError("답변을 받는 도중 연결이 끊겼어요.");
   }
+}
+
+/** 식당 상세. 없으면 ApiError(404), 서버에 닿지 않으면 ApiError. */
+export async function fetchDetail(restaurantId: number, signal?: AbortSignal): Promise<RestaurantDetail> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/api/restaurants/${restaurantId}`, { signal });
+  } catch {
+    if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+    throw new ApiError("챗봇 서버에 연결할 수 없어요. 서버(src/api/chat_server.py)가 켜져 있는지 확인해 주세요.");
+  }
+  if (res.status === 404) throw new ApiError("식당 정보를 찾지 못했어요.", 404);
+  if (!res.ok) throw new ApiError(`식당 정보를 불러오지 못했어요 (${res.status})`, res.status);
+  return res.json();
 }

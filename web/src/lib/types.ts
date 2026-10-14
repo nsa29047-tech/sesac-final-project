@@ -59,3 +59,46 @@ export interface ChatMessage {
   streaming: boolean;
   error?: string;
 }
+
+// GET /api/restaurants/{id} (상세 팝업). Restaurant 에 아래가 더해진다.
+export interface HoursInterval {
+  open: string; // "HH:MM"
+  close: string;
+}
+
+export interface DayHours {
+  day: number; // 0=일 ... 6=토
+  closed: boolean;
+  intervals: HoursInterval[];
+}
+
+export interface Note {
+  video_id: string;
+  title: string;
+  url: string;
+  concept: string | null;
+  atmosphere: string | null;
+  key_points: string[];
+  final_review: string | null;
+  is_course: boolean;
+  course_name: string | null;
+}
+
+export interface Menu {
+  video_id: string;
+  item_type: "FOOD" | "DRINK";
+  name: string;
+  description: string | null;
+  course_stage: string | null;
+  menu_order: number | null;
+  mentioned_sec: number | null; // 영상 속 시각(초), 자막에서 추정한 값
+}
+
+export interface RestaurantDetail extends Restaurant {
+  phone: string | null;
+  website: string | null;
+  chef_info: string | null; // 영상에서 한 말이라 검증된 사실이 아니다
+  hours: DayHours[];
+  notes: Note[];
+  menus: Menu[];
+}
