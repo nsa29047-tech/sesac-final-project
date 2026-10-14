@@ -32,7 +32,7 @@
 sesac-final-project/
 ├── src/
 │   ├── app.py                          # LangGraph 엔트리포인트 (chatbot.graph.build_graph)
-│   ├── chatbot/                        # 챗봇 에이전트: graph.py(ReAct 그래프+시스템 프롬프트), tools.py(find_restaurants·recommend_by_taste·get_restaurant_info·geocode_place), cli.py(터미널 대화), eval/(평가셋 cases.py + run_eval.py)
+│   ├── chatbot/                        # 챗봇 에이전트: graph.py(ReAct 그래프+시스템 프롬프트), tools.py(find_restaurants·recommend_by_taste·get_restaurant_info·geocode_place), cli.py(터미널 대화), eval/(평가셋 cases.py + run_eval.py), schemas.py·serialize.py(챗봇 API 응답 형식과 변환 계층), test_serialize.py
 │   ├── pipeline/                       # 데이터 수집 파이프라인
 │   │   ├── common.py                   # 자막 추출 단계의 공통 코드(셰프 추출 chefs_for_store 포함): 경로·모델·OpenAI 클라이언트, load_stores, 시각 보정(fix_times), 평가어 제거(strip_generic), 영상 구간 나누기(video_parts), 코스 판단(detect_course), 음식 분류(classify_cuisine)
 │   │   ├── collect_video_urls.py       # 1. 채널 영상 URL 수집 (yt-dlp, 이분 탐색)
@@ -54,7 +54,9 @@ sesac-final-project/
 │   │       ├── extract_chef_info.py  # 셰프 단독 추출(예전 방식, data/chef_notes). 지금은 extract_script_split.py 가 추출 때 함께 뽑음
 │   │       └── probe_price.py / michelin_api_probe.py / save_scripts.py  # 가격대·Parse API 확인용, 옛 자막 수집
 │   ├── api/
-│   │   └── pipeline_server.py          # n8n(Docker)이 호출하는 HTTP API(FastAPI, X-API-Key 인증). process_video.py 를 하위 프로세스로 실행하고 /job 으로 상태를 알려 준다. 사용법은 3-2
+│   │   ├── pipeline_server.py          # n8n(Docker)이 호출하는 파이프라인 HTTP API(FastAPI, X-API-Key 인증). process_video.py 를 하위 프로세스로 실행하고 /job 으로 상태를 알려 준다. 사용법은 3-2
+│   │   ├── chat_server.py              # 챗봇 HTTP API(FastAPI, SSE 스트리밍). Next.js 전환용, 로컬 데모. 읽기 전용 DB 계정만 사용. 사용법은 5-1, 설계는 CHATBOT_API_DESIGN.md
+│   │   └── smoke_chat_api.py           # chat_server.py 스모크 시험(13개 확인, --no-llm 으로 OpenAI 없이)
 │   └── db/
 │       ├── restaurant_schema.sql       # PostgreSQL 테이블 정의
 │       ├── restaurant_chunks.sql       # RAG 청크 테이블 (pgvector)
@@ -279,6 +281,25 @@ uv run python src/db/test_rag.py                                      # 검색 �
 ```bash
 uv run langgraph dev
 ```
+
+### 5-1. 챗봇 HTTP API (Next.js 전환용, 로컬 데모)
+
+Streamlit이 LangGraph를 직접 호출하는 구조를 Next.js가 쓸 수 있는 HTTP API로 분리하는 작업입니다. 설계는 `CHATBOT_API_DESIGN.md`. 단계 0(응답 형식·변환 계층)과 단계 1(서버)까지 구현했고, Next.js 화면은 아직입니다. Streamlit은 당분간 그대로 쓸 수 있습니다.
+
+```bash
+uv run python src/api/chat_server.py              # http://127.0.0.1:8000 (--host, --port)
+uv run python src/api/smoke_chat_api.py           # 스모크 시험 13개 (--no-llm: OpenAI 호출 없이)
+uv run python src/chatbot/test_serialize.py       # 변환 계층 시험 5개
+```
+
+| 엔드포인트 | 설명 |
+|---|---|
+| `POST /api/chat` | `{"thread_id": "...", "message": "..."}` -> SSE. 이벤트 순서: `thread` -> `status`(도구 호출, 0회 이상) -> `token`(답변 조각) -> `restaurants`(카드·지도용 구조화 데이터, 답변에 이름이 나온 식당만) -> `done`. 오류면 `error` |
+| `GET /api/restaurants/{id}` | 식당 상세(영업시간·메뉴·영상 노트). 없으면 404 |
+| `GET /api/health` | 서버·DB 확인 |
+
+로컬 데모용입니다: 127.0.0.1에만 열고 CORS는 `http://localhost:3000`만 허용합니다(`CHAT_ALLOWED_ORIGINS`로 변경). 인증·요청 제한은 없으니 외부에 공개하려면 추가해야 합니다. 서버는 읽기 전용 계정(`READONLY_POSTGRES_URI`)으로만 DB에 접속하고(쓰기 권한 `POSTGRES_URI`는 프로세스 환경에서 지웁니다), 연결 풀을 씁니다. 대화 기억은 서버 메모리라 재시작하면 사라지고, 같은 대화에서 동시에 두 질문을 보내면 409입니다. 질문은 500자, 응답은 60초로 제한합니다. 브라우저가 연결을 끊으면 그래프 실행을 멈춥니다.
+
 
 ## 진행 상황
 
