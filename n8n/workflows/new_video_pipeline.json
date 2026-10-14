@@ -1,0 +1,473 @@
+{
+  "name": "새 영상 자동 처리",
+  "nodes": [
+    {
+      "id": "733ffa60-6254-5348-a468-1b33a5b393a5",
+      "name": "6시간마다",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "41ae4220-2ca0-50ec-bd6f-8b6e8344dfae",
+      "name": "수동 실행",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        160
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "04db0fc3-1ae5-581e-bd7e-7d4babcb56cc",
+      "name": "새 영상 찾기",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PIPELINE_API_URL }}/discover",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.PIPELINE_API_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({recent: 10}) }}"
+      }
+    },
+    {
+      "id": "517c0db7-12c3-566d-af58-4052d8e83ed9",
+      "name": "다음 영상 처리 시작",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PIPELINE_API_URL }}/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.PIPELINE_API_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}"
+      }
+    },
+    {
+      "id": "c8261264-5300-5091-ba10-6a1d909d6013",
+      "name": "시작됐나?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        780,
+        80
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1dccd2d3-b02b-593d-be0f-63562752f939",
+              "leftValue": "={{ $json.started }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a56d2cb2-9c8e-5fd6-843b-07a2e2fda6e7",
+      "name": "60초 대기",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1040,
+        0
+      ],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 60,
+        "unit": "seconds"
+      },
+      "webhookId": "28f4b267-1eac-5573-98c9-c1f0c6da174e"
+    },
+    {
+      "id": "5d7410ee-ed05-5fbf-b6e3-93ba13f1926d",
+      "name": "작업 상태",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.PIPELINE_API_URL }}/job",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.PIPELINE_API_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "8b8de029-95fe-50d4-a750-1b24f68491bc",
+      "name": "아직 실행 중?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1560,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7cf99421-3f0b-5c29-8222-fe58121f44d5",
+              "leftValue": "={{ $json.running }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a81490a1-9362-5d63-8b22-978f3eaa7416",
+      "name": "결과 정리",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// 방금 끝난 작업의 결과를 영상별 메시지로 정리한다. 이 노드 뒤에 알림 노드(Slack·Discord·이메일)를 연결해 쓴다.\nconst j = $input.first().json;\nconst results = (j.result && j.result.results) || [];\nif (results.length === 0) {\n  return [{ json: { status: 'error', subject: '[파이프라인] ❌ 작업 결과를 읽지 못함',\n    message: `작업 결과를 읽지 못했습니다 (exit ${j.exit_code}): ${(j.output_tail || []).join(' / ')}` } }];\n}\nconst icon = { loaded: '✅', skipped: '⏭️', needs_review: '👀', failed: '❌', pending: '⏸️' };\nreturn results.map(v => ({ json: { ...v,\n  subject: `[파이프라인] ${icon[v.status] || ''} ${v.status} - ${v.title || v.video_id}`,\n  message: `${icon[v.status] || ''} [${v.status}] ${v.title || v.video_id}\\n단계: ${v.stage || '-'} / 자막: ${v.caption_type || '-'}` +\n           (v.skip_reason ? `\\n사유: ${v.skip_reason}` : '') + (v.error ? `\\n오류: ${v.error}` : '') + (v.note ? `\\n참고: ${v.note}` : '') +\n           (v.michelin_pending ? '\\n미슐랭: Parse 한도로 아직 못 채움 (매일 미슐랭 워크플로우가 채움)' : '') } }));"
+      }
+    },
+    {
+      "id": "1397dfd9-3db3-5d85-82a2-6c8a79276674",
+      "name": "현재 상태",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1040,
+        240
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.PIPELINE_API_URL }}/status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.PIPELINE_API_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "bb416413-e951-588a-bdaa-916d89fd17ca",
+      "name": "요약",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        240
+      ],
+      "parameters": {
+        "jsCode": "// 처리할 영상이 더 없을 때 한 번: 사람이 볼 것들을 요약한다. 이 노드 뒤에 알림 노드를 연결해 쓴다.\nconst s = $input.first().json;\nconst att = s.attention || [];\nconst lines = att.map(v => `- ${v.status}${v.michelin_pending ? '+미슐랭대기' : ''} ${v.video_id} ${v.title || ''} ${v.skip_reason || v.error || ''}`);\nif (att.length === 0) return [];   // 확인할 게 없으면 메일을 보내지 않는다(6시간마다 돌아도 조용하게)\nreturn [{ json: { counts: s.counts, attention: att,\n  subject: `[파이프라인] 확인 필요 ${att.length}건`,\n  message: `파이프라인 한 바퀴 끝. 상태: ${JSON.stringify(s.counts)}` + (lines.length ? `\\n확인 필요:\\n${lines.join('\\n')}` : '') } }];"
+      }
+    },
+    {
+      "id": "779e967a-f73e-5661-84b8-f2201e8d2712",
+      "name": "영상 결과 메일",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2080,
+        100
+      ],
+      "parameters": {
+        "fromEmail": "nsa29047@gmail.com",
+        "toEmail": "nsa29047@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.message }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "bdc01376-786e-5097-a64f-e3e8bdeea703",
+      "name": "요약 메일",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1560,
+        240
+      ],
+      "parameters": {
+        "fromEmail": "nsa29047@gmail.com",
+        "toEmail": "nsa29047@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.message }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "c1893ffc-c9a7-5793-94e7-084c739649c9",
+      "name": "메모 A",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        260,
+        -260
+      ],
+      "parameters": {
+        "content": "## 새 영상 자동 처리\n6시간마다 채널의 새 영상을 큐에 넣고, 영상을 하나씩 끝까지 처리한다(영상당 3~20분).\n\n**알림(메일)**: 영상 하나가 끝날 때마다 `영상 결과 메일`, 한 바퀴가 끝나고 확인할 영상이 있을 때만 `요약 메일`이 간다. 두 메일 노드와 `SMTP` 자격 증명을 n8n에서 한 번 선택해야 한다(받는 주소는 `NOTIFY_TO`).\n\n사람이 봐야 하는 영상(needs_review)은 API `POST /videos/{id}/reset` (accept / skip / redo_from) 로 되돌립니다.",
+        "width": 640,
+        "height": 240
+      }
+    }
+  ],
+  "connections": {
+    "6시간마다": {
+      "main": [
+        [
+          {
+            "node": "새 영상 찾기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "수동 실행": {
+      "main": [
+        [
+          {
+            "node": "새 영상 찾기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "새 영상 찾기": {
+      "main": [
+        [
+          {
+            "node": "다음 영상 처리 시작",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "다음 영상 처리 시작": {
+      "main": [
+        [
+          {
+            "node": "시작됐나?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "시작됐나?": {
+      "main": [
+        [
+          {
+            "node": "60초 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "현재 상태",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "60초 대기": {
+      "main": [
+        [
+          {
+            "node": "작업 상태",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "작업 상태": {
+      "main": [
+        [
+          {
+            "node": "아직 실행 중?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "아직 실행 중?": {
+      "main": [
+        [
+          {
+            "node": "60초 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "결과 정리",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "결과 정리": {
+      "main": [
+        [
+          {
+            "node": "다음 영상 처리 시작",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "영상 결과 메일",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "현재 상태": {
+      "main": [
+        [
+          {
+            "node": "요약",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "요약": {
+      "main": [
+        [
+          {
+            "node": "요약 메일",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Seoul"
+  }
+}

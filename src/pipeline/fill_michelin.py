@@ -38,6 +38,11 @@ _PENDING_NOTE_RE = re.compile(r"미슐랭 미조회;\s*|미슐랭 조회 실패:
 _CAP_HINTS = ("Daily request cap", "호출 한도")
 
 
+def _video_id(url: str) -> str:
+    m = re.search(r"v=([0-9A-Za-z_-]{11})", url)
+    return m.group(1) if m else ""
+
+
 def needs_check(row: Dict[str, str]) -> bool:
     if not row["korean_name"].strip() or not row["google_cid"].strip():
         return False
@@ -55,7 +60,7 @@ def save_csv(path: Path, fieldnames: List[str], rows: List[Dict[str, str]]) -> N
     os.replace(tmp, path)
 
 
-def main(csv_path: Path, max_calls: int, only_notes: str = "") -> None:
+def main(csv_path: Path, max_calls: int, only_notes: str = "", only_videos: str = "") -> None:
     with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames
@@ -86,6 +91,11 @@ def main(csv_path: Path, max_calls: int, only_notes: str = "") -> None:
         wanted = {str(json.loads(f.read_text(encoding="utf-8")).get("google_cid") or "").strip() for f in files}
         by_cid = {c: g for c, g in by_cid.items() if c in wanted}
         print(f"--only-notes {only_notes}: 해당 결과의 식당 {len(wanted)}곳으로 대상을 좁혔습니다")
+
+    if only_videos:
+        vids = {v.strip() for v in only_videos.split(",") if v.strip()}
+        by_cid = {c: g for c, g in by_cid.items() if any(_video_id(r["video_url"]) in vids for r in g)}
+        print(f"--only-videos: 영상 {len(vids)}개의 식당으로 대상을 좁혔습니다")
 
     print(f"미슐랭 확인이 필요한 식당 {len(by_cid)}곳 (행 {sum(len(v) for v in by_cid.values())}개). 이번 실행 최대 {max_calls}회 호출")
     base.MICHELIN_MAX_CALLS = max_calls
@@ -133,5 +143,6 @@ if __name__ == "__main__":
     ap.add_argument("--csv", type=Path, default=DEFAULT_CSV)
     ap.add_argument("--max-calls", type=int, default=DEFAULT_MAX_CALLS, help="이번 실행에서 Parse API를 호출할 최대 횟수")
     ap.add_argument("--only-notes", default="", help="data/video_notes/<태그>/ 에 결과가 있는 식당만 처리")
+    ap.add_argument("--only-videos", default="", help="쉼표로 구분한 영상 ID에 나온 식당만 처리 (process_video.py 용)")
     args = ap.parse_args()
-    main(args.csv, args.max_calls, args.only_notes)
+    main(args.csv, args.max_calls, args.only_notes, args.only_videos)

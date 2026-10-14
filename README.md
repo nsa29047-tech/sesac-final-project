@@ -170,7 +170,54 @@ uv run parse add --marketplace guide-michelin-com-api
 | `GEMINI_API_KEY` | Gemini API. 자동 생성 자막 영상을 직접 분석할 때 사용(`extract_video_split.py`). 무료 등급은 YouTube 영상을 하루 8시간까지만 받는다 |
 | `POSTGRES_URI` | PostgreSQL 접속 문자열 |
 | `READONLY_POSTGRES_URI` | 읽기 전용 계정(`create_readonly_role.sql`) 접속 문자열. 챗봇(`src/chatbot`)과 `rag_search.py`가 원본 테이블 조회에 쓴다. **없으면 챗봇이 실행되지 않는다**(관리자 계정 `POSTGRES_URI`로 대신 접속하지 않음). 적재·정리 스크립트는 `POSTGRES_URI`를 쓴다 |
+| `PIPELINE_API_TOKEN` | `src/api/pipeline_server.py`(n8n이 호출하는 파이프라인 HTTP API)의 `X-API-Key` 값. 긴 무작위 문자열. 없으면 서버가 시작되지 않는다. n8n 컨테이너에는 `docker-compose.yml`이 이 값만 넘긴다 |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT` | LangSmith 트레이싱 |
+
+### 3-1. 새 영상 자동 처리 (`process_video.py`, n8n 연동용)
+
+영상 1개를 위 1~6단계에 해당하는 스크립트를 `--video-id`로 차례로 호출해 DB 적재까지 처리합니다. 진행 상태는 DB `video_queue`(`migrate_video_queue.sql`)에 기록하고, 단계는 `gate`(제목·소개란 LLM 판단: 식당 영상인지, 중국 본토 식당만 나오는지) → `places`(가게 추출·Places·미슐랭) → `michelin_check`(제목에 미쉐린·미슐랭·N스타가 있는데 Parse가 전부 NONE이면 표기 차이로 놓친 것일 수 있어 `needs_review`) → `captions`(자막 종류 확인) → `extract`(제작자 자막이면 자막 분석, 자동 생성 자막·자막 없음이면 Gemini 영상 분석) → `postprocess` → `load`입니다. 멈춘 영상은 같은 명령으로 끝난 단계 다음부터 이어서 처리합니다. 상태는 `pending / running / loaded / skipped(대상 아님) / needs_review(사람 확인: Places 매칭 실패, 메뉴 없음) / failed(재시도 가능)`이고, 명령 출력은 마지막 JSON 한 덩어리라 n8n이 그대로 파싱할 수 있습니다.
+
+```bash
+uv run python src/pipeline/process_video.py init-db                  # video_queue 테이블 생성 (한 번)
+uv run python src/pipeline/process_video.py discover --dry-run       # 채널 최신 영상 중 처리한 적 없는 영상 확인
+uv run python src/pipeline/process_video.py run VIDEO_ID --stop-after places   # 단계별 검증
+uv run python src/pipeline/process_video.py run --next 3             # 대기·실패 영상 3개 처리
+uv run python src/pipeline/process_video.py status                   # 상태별 건수, needs_review·failed 목록
+uv run python src/pipeline/process_video.py reset VIDEO_ID           # 확인 후 needs_review·failed를 다시 대기로 (--skip 사유로 제외)
+#   reset VIDEO_ID --accept   # needs_review를 사람이 확인해 문제없다고 보고 다음 단계부터 진행 (예: 미슐랭 NONE이 맞는 경우)
+uv run python src/pipeline/process_video.py michelin                 # Parse 한도로 못 채운 미슐랭을 채워 DB에 반영
+```
+
+한 번에 한 영상만 처리합니다(잠금 파일 `data/.process_video.lock`, 이미 실행 중이면 종료 코드 75와 `status: busy`). 결과 JSON은 임시 폴더 `data/video_notes/*-live`에 쌓였다가 적재 후 `_live_archive/{video_id}/`로 옮겨지고, 단계별 로그는 `data/logs/process_video/{video_id}.log`에 남습니다.
+
+### 3-2. n8n 자동화 (로컬 Docker)
+
+n8n 컨테이너 안에는 이 프로젝트의 Python 환경(uv, `.venv`, 키, `data/`)이 없으므로 **처리는 호스트의 HTTP API가, n8n은 호출만** 합니다. `process_video.py`의 처리 로직은 그대로이고 API는 얇은 래퍼입니다.
+
+```
+n8n (Docker, :5678) ──HTTP X-API-Key──▶ host.docker.internal:8765  src/api/pipeline_server.py ──▶ process_video.py ──▶ 기존 단계 스크립트
+```
+
+```bash
+uv run python src/api/pipeline_server.py                                 # 1) 호스트에서 API 실행 (127.0.0.1:8765)
+docker compose -f n8n/docker-compose.yml --env-file .env up -d           # 2) n8n 실행 -> http://localhost:5678 (owner 계정 생성)
+uv run python n8n/build_workflows.py                                     # (워크플로우 JSON 다시 만들 때)
+```
+
+3) n8n에서 `Workflows → Import from File`로 `n8n/workflows/new_video_pipeline.json`(6시간마다 `discover` → 영상을 하나씩 처리 → 끝나면 요약)과 `fill_michelin_daily.json`(매일 09시 미슐랭 채우기)을 가져옵니다. 알림은 메일(Send Email 노드)로 가며, 가져온 뒤 메일 노드 3개(`영상 결과 메일`·`요약 메일`·`결과 메일`)에 SMTP 자격 증명을 선택해야 합니다(받는 주소는 `n8n/build_workflows.py`의 `NOTIFY_TO`). 영상 하나가 끝날 때마다, 한 바퀴 끝에 확인할 영상(needs_review·failed·미슐랭 대기)이 있을 때만, 미슐랭에 변화가 있을 때만 메일이 갑니다.
+
+`host.docker.internal`로 닿지 않으면 API를 `--host 0.0.0.0`으로 띄웁니다(같은 네트워크에 열리므로 토큰을 꼭 쓰고 방화벽을 확인).
+
+| 엔드포인트 | 설명 |
+|---|---|
+| `POST /discover` | 채널의 새 영상을 큐에 넣는다 (`dry_run`으로 확인만) |
+| `POST /run` | 영상 하나 처리 작업 시작(202). `video_id` 없으면 대기·실패(시도 3회 미만) 영상 중 가장 오래된 것. 처리할 게 없으면 `started:false` |
+| `POST /michelin` | 못 채운 미슐랭 채우기 작업 시작(202) |
+| `GET /job` | 현재/마지막 작업. `running:false`가 되면 `result`에 결과 JSON |
+| `GET /status`, `GET /videos/{id}` | 상태별 건수와 확인이 필요한 영상 / 영상 하나의 상태 |
+| `POST /videos/{id}/reset` | `needs_review`·`failed`를 사람이 확인한 뒤 되돌린다 (`accept` / `skip` / `redo_from`) |
+
+작업은 한 번에 하나만 돌고(이미 실행 중이거나 CLI가 잠금 중이면 409), 영상 처리 중에 미슐랭 작업을 시작할 수 없습니다. 영상 하나는 수동 자막 약 3분, 자동 자막(Gemini) 약 15분이므로 n8n은 시작 후 60초마다 `GET /job`을 확인합니다.
 
 ### 3. 파이프라인 실행
 
