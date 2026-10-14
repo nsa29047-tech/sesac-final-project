@@ -64,7 +64,8 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({recent: 10}) }}"
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "id": "517c0db7-12c3-566d-af58-4052d8e83ed9",
@@ -98,7 +99,8 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "{}"
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "id": "c8261264-5300-5091-ba10-6a1d909d6013",
@@ -179,7 +181,8 @@
             }
           }
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "id": "8b8de029-95fe-50d4-a750-1b24f68491bc",
@@ -257,7 +260,8 @@
             }
           }
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "id": "bb416413-e951-588a-bdaa-916d89fd17ca",
@@ -269,7 +273,7 @@
         240
       ],
       "parameters": {
-        "jsCode": "// 처리할 영상이 더 없을 때 한 번: 사람이 볼 것들을 요약한다. 이 노드 뒤에 알림 노드를 연결해 쓴다.\nconst s = $input.first().json;\nconst att = s.attention || [];\nconst lines = att.map(v => `- ${v.status}${v.michelin_pending ? '+미슐랭대기' : ''} ${v.video_id} ${v.title || ''} ${v.skip_reason || v.error || ''}`);\nif (att.length === 0) return [];   // 확인할 게 없으면 메일을 보내지 않는다(6시간마다 돌아도 조용하게)\nreturn [{ json: { counts: s.counts, attention: att,\n  subject: `[파이프라인] 확인 필요 ${att.length}건`,\n  message: `파이프라인 한 바퀴 끝. 상태: ${JSON.stringify(s.counts)}` + (lines.length ? `\\n확인 필요:\\n${lines.join('\\n')}` : '') } }];"
+        "jsCode": "// 처리할 영상이 더 없을 때 한 번: 사람이 볼 것들을 요약한다. 이 노드 뒤에 알림 노드를 연결해 쓴다.\nconst s = $input.first().json;\nif (!s.counts) {   // /status 가 정상 응답이 아니다(401: 토큰 불일치 등). HTTP 오류는 노드 오류로 잡히지 않게 해 두었으므로 여기서 알린다.\n  return [{ json: { subject: '[파이프라인] ❌ API 호출 실패', message: `파이프라인 API 가 정상 응답하지 않았습니다: ${JSON.stringify(s).slice(0, 300)}\\n.env 의 PIPELINE_API_TOKEN 과 n8n 컨테이너의 값이 같은지 확인하세요 (compose 를 다시 올려야 반영됩니다).` } }];\n}\nconst att = s.attention || [];\nconst lines = att.map(v => `- ${v.status}${v.michelin_pending ? '+미슐랭대기' : ''} ${v.video_id} ${v.title || ''} ${v.skip_reason || v.error || ''}`);\nif (att.length === 0) return [];   // 확인할 게 없으면 메일을 보내지 않는다(6시간마다 돌아도 조용하게)\nreturn [{ json: { counts: s.counts, attention: att,\n  subject: `[파이프라인] 확인 필요 ${att.length}건`,\n  message: `파이프라인 한 바퀴 끝. 상태: ${JSON.stringify(s.counts)}` + (lines.length ? `\\n확인 필요:\\n${lines.join('\\n')}` : '') } }];"
       }
     },
     {
@@ -280,6 +284,37 @@
       "position": [
         2080,
         100
+      ],
+      "parameters": {
+        "fromEmail": "nsa29047@gmail.com",
+        "toEmail": "nsa29047@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.message }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "d073113a-9974-58a4-af5a-141cea1664de",
+      "name": "연결 실패 정리",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        420
+      ],
+      "parameters": {
+        "jsCode": "// API 호출 노드가 연결하지 못했을 때(오류 출력) 메시지를 만든다. 이 노드 뒤에 메일 노드가 있다.\nconst j = $input.first().json;\nconst msg = (j.error && (j.error.message || j.error.description)) || JSON.stringify(j).slice(0, 300);\nreturn [{ json: { subject: `[파이프라인] ❌ API 연결 실패 (${$workflow.name})`,\n  message: `워크플로우 '${$workflow.name}' 가 파이프라인 API 를 호출하지 못했습니다.\\n오류: ${msg}\\n\\n호스트에서 \\`uv run python src/api/pipeline_server.py\\` 가 켜져 있는지 확인하세요. (n8n 컨테이너는 host.docker.internal:8765 로 호출합니다)` } }];"
+      }
+    },
+    {
+      "id": "39c5bd2e-dfe0-5282-a756-b2422507f372",
+      "name": "연결 실패 메일",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1040,
+        420
       ],
       "parameters": {
         "fromEmail": "nsa29047@gmail.com",
@@ -355,6 +390,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "연결 실패 정리",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -363,6 +405,13 @@
         [
           {
             "node": "시작됐나?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "연결 실패 정리",
             "type": "main",
             "index": 0
           }
@@ -403,6 +452,13 @@
         [
           {
             "node": "아직 실행 중?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "연결 실패 정리",
             "type": "main",
             "index": 0
           }
@@ -451,6 +507,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "연결 실패 정리",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -459,6 +522,17 @@
         [
           {
             "node": "요약 메일",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "연결 실패 정리": {
+      "main": [
+        [
+          {
+            "node": "연결 실패 메일",
             "type": "main",
             "index": 0
           }

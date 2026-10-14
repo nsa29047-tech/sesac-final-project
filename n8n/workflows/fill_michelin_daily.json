@@ -65,7 +65,8 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "{\"max_calls\": 90}"
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "id": "c8261264-5300-5091-ba10-6a1d909d6013",
@@ -146,7 +147,8 @@
             }
           }
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "id": "8b8de029-95fe-50d4-a750-1b24f68491bc",
@@ -214,6 +216,37 @@
       }
     },
     {
+      "id": "d073113a-9974-58a4-af5a-141cea1664de",
+      "name": "연결 실패 정리",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        340
+      ],
+      "parameters": {
+        "jsCode": "// API 호출 노드가 연결하지 못했을 때(오류 출력) 메시지를 만든다. 이 노드 뒤에 메일 노드가 있다.\nconst j = $input.first().json;\nconst msg = (j.error && (j.error.message || j.error.description)) || JSON.stringify(j).slice(0, 300);\nreturn [{ json: { subject: `[파이프라인] ❌ API 연결 실패 (${$workflow.name})`,\n  message: `워크플로우 '${$workflow.name}' 가 파이프라인 API 를 호출하지 못했습니다.\\n오류: ${msg}\\n\\n호스트에서 \\`uv run python src/api/pipeline_server.py\\` 가 켜져 있는지 확인하세요. (n8n 컨테이너는 host.docker.internal:8765 로 호출합니다)` } }];"
+      }
+    },
+    {
+      "id": "39c5bd2e-dfe0-5282-a756-b2422507f372",
+      "name": "연결 실패 메일",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        780,
+        340
+      ],
+      "parameters": {
+        "fromEmail": "nsa29047@gmail.com",
+        "toEmail": "nsa29047@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.message }}",
+        "options": {}
+      }
+    },
+    {
       "id": "c605361e-4e71-5907-a83b-6e454ef2063d",
       "name": "메모 B",
       "type": "n8n-nodes-base.stickyNote",
@@ -260,6 +293,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "연결 실패 정리",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -293,6 +333,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "연결 실패 정리",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -319,6 +366,17 @@
         [
           {
             "node": "결과 메일",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "연결 실패 정리": {
+      "main": [
+        [
+          {
+            "node": "연결 실패 메일",
             "type": "main",
             "index": 0
           }

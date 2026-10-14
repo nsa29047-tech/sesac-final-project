@@ -206,6 +206,8 @@ uv run python n8n/build_workflows.py                                     # (워�
 
 3) n8n에서 `Workflows → Import from File`로 `n8n/workflows/new_video_pipeline.json`(6시간마다 `discover` → 영상을 하나씩 처리 → 끝나면 요약)과 `fill_michelin_daily.json`(매일 09시 미슐랭 채우기)을 가져옵니다. 알림은 메일(Send Email 노드)로 가며, 가져온 뒤 메일 노드 3개(`영상 결과 메일`·`요약 메일`·`결과 메일`)에 SMTP 자격 증명을 선택해야 합니다(받는 주소는 `n8n/build_workflows.py`의 `NOTIFY_TO`). 영상 하나가 끝날 때마다, 한 바퀴 끝에 확인할 영상(needs_review·failed·미슐랭 대기)이 있을 때만, 미슐랭에 변화가 있을 때만 메일이 갑니다.
 
+**실패 알림**: 두 워크플로우의 API 호출 노드는 연결 거부·시간 초과 같은 오류를 두 번째 출력(오류 출력)으로 내보내고, `연결 실패 정리` → `연결 실패 메일`이 "호스트에서 `pipeline_server.py`가 켜져 있는지 확인" 안내와 함께 메일을 보냅니다(Error Workflow 설정 없이 동작). HTTP 오류(예: 토큰 불일치 401)는 노드 오류로 잡히지 않게 해 두었고 `요약` 노드가 `API 호출 실패` 메일로 알립니다. `n8n/workflows/error_alert.json`(`실패 알림`)은 그 밖의 예기치 못한 노드 오류용 Error Workflow이며, 가져온 n8n 버전에서 설정 드롭다운에 회색으로 나오면(선택 불가) 쓰지 않아도 됩니다. n8n·PC가 꺼져 있으면 스케줄 자체가 돌지 않아 알림도 없습니다.
+
 `host.docker.internal`로 닿지 않으면 API를 `--host 0.0.0.0`으로 띄웁니다(같은 네트워크에 열리므로 토큰을 꼭 쓰고 방화벽을 확인).
 
 | 엔드포인트 | 설명 |
