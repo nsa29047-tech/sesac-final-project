@@ -352,6 +352,8 @@ def category_section() -> str:
     try:
         rows = run_query("SELECT category_broad AS b, category_detail AS d, count(*) AS n FROM restaurants WHERE category_broad IS NOT NULL "
                          "GROUP BY 1, 2 ORDER BY 1, 3 DESC, 2")
+    except RuntimeError:
+        raise   # 읽기 전용 계정 설정이 없으면 조용히 넘어가지 않고 시작 단계에서 멈춘다(rag_search.connect)
     except Exception:
         return ""
     by = {}

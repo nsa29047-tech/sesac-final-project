@@ -3,6 +3,7 @@
 LangGraph 그래프(chatbot.graph.build_graph)를 직접 호출한다. 답변은 토큰 단위로 스트리밍하고, 도구를 호출하는 동안에는
 "검색 중" 상태 표시에 어떤 조건으로 찾는지 보여 준다. 추천된 식당은 도구 결과(구조화 데이터)로 카드를 그린다(chatbot.cards).
 """
+import os
 import sys
 import uuid
 import warnings
@@ -20,6 +21,10 @@ from chatbot.cards import CSS, card_html, collect, esc, pick, strip_links  # noq
 from chatbot.detail import DETAIL_CSS, TL_CSS, drinks_html, fetch_detail, info_html, intro_html, player_html, section  # noqa: E402
 from chatbot.graph import build_graph  # noqa: E402
 from chatbot.maps import map_html  # noqa: E402
+
+if not os.environ.get("READONLY_POSTGRES_URI"):   # 챗봇은 읽기 전용 계정으로만 DB에 접속한다(관리자 계정으로 대신 접속하지 않는다)
+    st.error("`READONLY_POSTGRES_URI`가 설정되지 않아 챗봇을 시작할 수 없어요. `.env`에 읽기 전용 계정 접속 문자열을 넣어 주세요(계정 생성: `src/db/create_readonly_role.sql`).")
+    st.stop()
 
 EXAMPLES = [
     "서울에 있는 미슐랭 스타 식당 알려줘",

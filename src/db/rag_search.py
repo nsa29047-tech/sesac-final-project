@@ -43,11 +43,12 @@ class Judgement(BaseModel):
 
 
 def connect():
-    """읽기 전용 계정(READONLY_POSTGRES_URI)으로 접속한다. 없으면 POSTGRES_URI(관리자)로 접속하되 경고한다."""
+    """읽기 전용 계정(READONLY_POSTGRES_URI)으로만 접속한다. 변수가 없으면 관리자 계정(POSTGRES_URI)으로 넘어가지 않고 실행을 멈춘다.
+    챗봇이 조용히 쓰기 권한으로 동작하는 일을 막기 위해서다(적재·정리 스크립트는 이 함수를 쓰지 않고 POSTGRES_URI 를 직접 쓴다)."""
     uri = os.environ.get("READONLY_POSTGRES_URI")
     if not uri:
-        print("[경고] READONLY_POSTGRES_URI 가 없어 POSTGRES_URI(관리자 계정)로 접속합니다. 읽기 전용 계정을 쓰세요.")
-        uri = os.environ["POSTGRES_URI"]
+        raise RuntimeError("READONLY_POSTGRES_URI 가 없습니다. 챗봇은 읽기 전용 계정으로만 DB에 접속합니다(.env 에 설정하세요. 계정 생성: src/db/create_readonly_role.sql). "
+                           "관리자 계정(POSTGRES_URI)으로는 접속하지 않습니다.")
     return psycopg2.connect(uri)
 
 
