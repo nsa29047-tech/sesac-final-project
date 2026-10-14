@@ -496,7 +496,39 @@
 
 ---
 
-## 전체 미해결 목록 (10/1 기준, 최신은 위 10/2·10/5·10/6·10/7·10/8·10/13 절 참고)
+## 10/14 (수)
+> 새 영상이 올라오면 식당 정보 추출부터 DB 적재까지 자동으로 처리하는 n8n 자동화를 만들었다. 같은 날 PR #3(`feature/pipeline` -> `main`)으로 올렸다(코드 변경 2커밋).
+
+**오늘 한 일**
+- **`process_video.py`** (영상 1개 처리 오케스트레이터): 기존 단계 스크립트를 `--video-id`로 호출하고, 진행 상태를 새 테이블 `video_queue`(`migrate_video_queue.sql`)에 기록해 멈춘 영상은 다음 단계부터 이어서 처리한다.
+  - 단계: gate(제목·소개란 LLM 판단) -> places(가게 추출·Places·미슐랭) -> michelin_check -> captions(자막 종류 확인) -> extract(제작자 자막이면 자막 분석, 자동 자막·없음이면 Gemini 영상 분석) -> postprocess -> load(식당·지역·노트·셰프·임베딩).
+  - `postprocess_split.py`가 폴더 전체를 처리하므로 결과는 임시 폴더(`*-live`)에 영상 하나씩만 두고 적재 후 `_live_archive/`로 옮긴다. 잠금 파일로 동시 실행을 막는다.
+  - 상태: pending / running / loaded / skipped / needs_review / failed. `run --next`는 failed를 시도 3회까지만 다시 집는다. 명령은 init-db, discover, enqueue, run, status, reset(--accept/--skip/--redo-from), michelin.
+- **gate 보정**: 모델이 판단 근거는 서울이라고 쓰고도 "중국 본토만 소개" 불리언을 true로 내서 청담 가겐이 skipped됐다. 식당별 지역을 적게 하고 중국 본토 여부는 코드가 계산하도록 바꿨다. 애매하면 통과시키고 places 단계의 숙소·CN 규칙이 다시 거른다.
+- **`michelin_check` 단계**: 영상 제목에 미쉐린·미슐랭·N스타가 있는데 Parse 결과가 이 영상의 식당 전부 NONE이면 needs_review로 보낸다(크레딧을 더 쓰지 않음). 확인 후 `reset ID --accept`로 진행한다.
+- **end-to-end 검증 3건**(DB에서 확인): Epicure(수동 자막, 3스타), 청담 가겐(자동 자막·Gemini, Gemini 추출만 약 14분), 크리스토퍼 쿠탕소(수동 자막, 3스타, n8n 수동 실행). 식당·영업시간·미슐랭·메뉴(시각 포함)·청크 적재와 `video_queue` loaded를 확인했다.
+  - 가겐: Places 공식명이 "가겐 by 최준호"인데 Parse에는 "GAGGEN by Choi Junho"(주소 일치)로 있어 자동 매칭이 탈락했다. "Junho Choi" 검색 결과로 1스타를 수동 반영(CSV·DB, 백업 `restaurants_info_before_gaggen.csv`).
+  - `data/restaurants_info.csv`에 남아 있던 빈 `history` 컬럼 때문에 `extract_restaurant_info.py`가 오류를 출력만 하고 종료 코드 0으로 끝났다. 컬럼을 제거하고(백업 `restaurants_info_before_drop_history.csv`) 이런 경우 오류 내용이 `error`에 남게 했다.
+- **`src/api/pipeline_server.py`** (FastAPI): n8n 컨테이너에서는 호스트의 Python 환경(uv, 키, `data/`)을 쓸 수 없어서 호스트에서 띄우는 얇은 래퍼. `X-API-Key`(`PIPELINE_API_TOKEN`) 인증, 영상 처리·미슐랭 채우기는 하위 프로세스로 띄우고 `GET /job`으로 확인, 한 번에 하나만 실행(겹치면 409).
+- **`n8n/`**: `docker-compose.yml`(`.env`에서 토큰만 컨테이너에 전달), `build_workflows.py`가 만드는 워크플로우 3개 - 새 영상 처리(6시간마다 discover -> 영상 하나씩 처리), 미슐랭 채우기(매일 09시), 실패 알림(Error Trigger). 알림은 메일(Gmail 앱 비밀번호 SMTP): 영상 결과, 확인할 영상이 있을 때만 요약, 미슐랭에 변화가 있을 때만 결과.
+- **실패 알림**: API 호출 노드의 오류 출력을 `연결 실패 메일`로 연결해 API 서버가 꺼졌을 때 알린다(401 등 HTTP 오류는 `요약` 노드가 알림). 실패 알림 Error Workflow는 이 n8n 버전의 설정 드롭다운에서 회색(선택 불가)이었고 원인은 확인하지 못했다. 서버를 끈 채 n8n에서 수동 실행해 연결 실패 메일 수신을 확인했다.
+- 기존 스크립트 변경은 작다: `get_transcripts_since.save_transcript` 분리, `fill_michelin.py --only-videos`. `fastapi`, `uvicorn` 추가.
+- 문서: README(3-1, 3-2, 구조·스키마·진행 상황, 환경변수 `PIPELINE_API_TOKEN`), CLAUDE.md, 이 일지.
+
+**확인한 것과 못 한 것**
+- 확인: 영상 3건의 gate부터 적재까지, n8n 수동 실행(쿠탕소), 메일 발송, 서버 다운 시 실패 알림 메일, API 인증·엔드포인트·작업 흐름.
+- 못 함: n8n 스케줄 활성화(켜려면 호스트의 `pipeline_server.py`와 Docker가 계속 켜져 있어야 함), 자동 자막(Gemini) 경로를 n8n에서 실행(CLI로만 확인, 영상당 약 15분), 실패 알림 Error Workflow 드롭다운 원인.
+
+**알려진 한계**
+- 영상 처리는 한 번에 하나씩만 돈다(임시 폴더와 CSV 공유). n8n이나 PC가 꺼져 있으면 스케줄 자체가 돌지 않아 알림도 없다. PC를 재부팅하면 API 서버를 다시 켜야 한다.
+- gate의 중국 본토 판별은 LLM이 적은 지역에 의존한다(틀리면 places 단계의 CN 제외가 한 번 더 거른다). 영문 표기 차이로 미슐랭을 놓친 경우는 michelin_check가 제목에 미슐랭 말이 있을 때만 잡는다.
+
+**다음**
+- n8n 스케줄 활성화와 새 자동 자막 영상으로 Gemini 경로 확인, 남은 자동 자막 영상(2025년 23개·2024년 11개) 분석, 메뉴 환각·누락 검증, 평가셋 확대.
+
+---
+
+## 전체 미해결 목록 (10/1 기준, 최신은 위 10/2·10/5·10/6·10/7·10/8·10/13·10/14 절 참고)
 
 **우선순위 높음**
 1. 3번 전체 실행(약 313개 영상): 호출 건수·비용 사전 안내, 소수 샘플 검증, 이어받기 지원. Parse 크레딧 한도 확인
@@ -511,7 +543,7 @@
 8. 자막 관련 스크립트 삭제 여부 결정 (`TranscriptNotes`를 먼저 옮겨야 함)
 
 **낮음**
-9. n8n 자동화
+9. n8n 자동화 (10/14 1차 완료. 스케줄 활성화와 자동 자막 경로의 n8n 실행 확인이 남음, 위 10/14 절 참고)
 10. 기존 DB가 있다면 `summary_badge` 컬럼과 `michelin_sources` 테이블 제거
 
 ---

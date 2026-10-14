@@ -45,6 +45,7 @@ sesac-final-project/
 │   │   ├── extract_script_split.py     # 5''''. A/B 분리 추출(A 가게 정보 / B 메뉴·음료·코스 단계 + 코스 판단·셰프 호출), 건별 저장 -> data/video_notes/gpt-4o-mini-script-split-v2/ (2026년), -2025/ (2025년), -2024/ (2024년). 2024년 영상은 환경변수 TARGETS_FILE=data/urls/transcript_targets_20240101.txt 로 대상 목록을 바꿔 실행
 │   │   ├── extract_video_split.py      # 5-a'. 자동 생성 자막 영상용 Gemini 영상 분석(자막은 쓰지 않음). 자막 방식과 같은 필드·같은 JSON 구조로 저장, 결과 후처리는 postprocess_split.py --tag 로 같이 쓴다
 │   │   ├── postprocess_split.py        # 5-b. A/B 분리 결과 후처리(음식 분류 다시 정하기(예전 reclassify_split_cuisine.py), 평가어·가격 문장, 코스 단계 보정, 음료 중복, 식당 이름 셰프 제거), 원본은 *_raw 폴더에 백업
+│   │   ├── process_video.py            # 7. 새 영상 1개를 gate -> places -> michelin_check -> captions -> extract -> postprocess -> load 로 처리(위 스크립트를 --video-id 로 호출, 상태는 video_queue). n8n 자동화의 진입점. 사용법은 3-1
 │   │   ├── get_transcripts_since.py    # 자막 수집 (yt-dlp, 기본 2025-01-01 이후·적재 가능 영상만, --since 로 날짜 변경, 이어받기)
 │   │   └── experiments/                # 실험·보류·미사용 코드. 지금 파이프라인은 import 하지 않음(sys.path로 pipeline 모듈만 가져다 씀)
 │   │       ├── extract_script_notes.py / extract_script_course.py / extract_script_v7.py / extract_script_two_stage.py / compare_prompt_v3.py  # 자막 추출 프롬프트 실험(A/B 분리 이전 방식)
@@ -52,6 +53,8 @@ sesac-final-project/
 │   │       ├── chunk_transcripts.py / extract_transcript_notes.py / check_course_gold.py  # 자막 원문 청킹 실험, 초기 스키마, 코스 점검표
 │   │       ├── extract_chef_info.py  # 셰프 단독 추출(예전 방식, data/chef_notes). 지금은 extract_script_split.py 가 추출 때 함께 뽑음
 │   │       └── probe_price.py / michelin_api_probe.py / save_scripts.py  # 가격대·Parse API 확인용, 옛 자막 수집
+│   ├── api/
+│   │   └── pipeline_server.py          # n8n(Docker)이 호출하는 HTTP API(FastAPI, X-API-Key 인증). process_video.py 를 하위 프로세스로 실행하고 /job 으로 상태를 알려 준다. 사용법은 3-2
 │   └── db/
 │       ├── restaurant_schema.sql       # PostgreSQL 테이블 정의
 │       ├── restaurant_chunks.sql       # RAG 청크 테이블 (pgvector)
@@ -74,6 +77,7 @@ sesac-final-project/
 │       ├── migrate_split_schema.sql    # 마이그레이션(10/8): A/B 분리 결과용. menus.cooking_features->description, taste_review/tips/price_text 삭제, menu_order·course_stage, video_restaurant_notes.is_course·course_name
 │       ├── migrate_price_columns.sql   # 마이그레이션(10/8): restaurants.price_level/price_min/price_max/price_currency
 │       ├── migrate_chef_chunk.sql      # 마이그레이션(10/8): restaurant_chunks에 CHEF 청크 종류 추가
+│       ├── migrate_video_queue.sql     # 마이그레이션(10/14): video_queue(새 영상 자동 처리의 진행 상태). process_video.py init-db 로도 적용
 │       ├── load_prices.py              # enrich_places_details.py --prices 결과 -> restaurants 가격 컬럼
 │       ├── create_scope_views.sql      # 조회 범위 뷰: restaurants_in_scope 등 (자막 분석 노트가 있는 식당만). 챗봇은 현재 쓰지 않음
 │       ├── create_chatbot_role.sql     # 챗봇 전용 DB 계정 스크립트. 현재 쓰지 않음(챗봇은 READONLY_POSTGRES_URI 사용)
@@ -82,6 +86,7 @@ sesac-final-project/
 │       ├── normalize_categories.py     # 이미 적재된 DB의 세부 분류 정리(--dry-run 가능). load_notes.py도 같은 규칙을 쓴다
 │       ├── rag_search.py               # 검색 모듈: SQL 필터 -> 벡터 후보 -> LLM 충족 판단(맞는 결과 없으면 빈 목록)
 │       └── test_rag.py                 # RAG 검색 테스트(12개 질문, 현재 범위 120곳)
+├── n8n/                                # n8n 자동화: docker-compose.yml, build_workflows.py(워크플로우 JSON 생성), workflows/(새 영상 처리·미슐랭 채우기·실패 알림)
 ├── parse_apis/                         # Parse SDK 스캐폴드. 생성 코드는 git 제외(`uv run parse add`로 재생성)
 ├── data/                               # 산출물 (git 제외)
 │   ├── urls/                           # 채널 영상 URL 목록 (원본 / 통과 / 제외)
@@ -134,6 +139,7 @@ sesac-final-project/
 | (`restaurants`의 `region_1~3`) | 지역(시 > 구/군 > 동·면, 최대 3단계, 없는 단계는 건너뛰고 앞에서부터 채움). 별도 테이블 없이 `restaurants` 컬럼으로 저장. 이전에 `regions` 테이블을 쓰던 DB는 `migrate_simplify_schema.sql` 실행(지역 컬럼 이전과 함께 `menus.description`·`is_signature`, `michelin_records`, `michelin_status.edition_type`·`is_active`, `restaurant_hours.is_closed` 제거), 안 쓰는 컬럼 정리는 `migrate_trim_columns.sql` |
 | `restaurant_hours` | 요일별 영업시간 (하루 여러 구간, 자정 넘김 지원). 휴무는 `open_time`/`close_time`이 NULL인 행. |
 | `michelin_status` | 미슐랭 현재 상태 (현재 등재 여부, 등급, 확인 시각) |
+| `video_queue` | 새 영상 자동 처리의 진행 상태(`migrate_video_queue.sql`). `status`(pending/running/loaded/skipped/needs_review/failed), 마지막으로 끝난 `stage`, 자막 종류 `caption_type`, 사유·오류, 미슐랭 대기 `michelin_pending`, 시도 횟수. 챗봇은 조회하지 않는다 |
 | `video_restaurant_mentions` | 영상 ↔ 식당 (N:M), LLM이 추출한 원본 이름·주소 보관 |
 | `menus` | 영상에서 추출한 메뉴/음료 (`description` 설명, 근거 `evidence`, 영상 속 순서 `menu_order`, 코스 단계 `course_stage`(참고용, 필터 금지), 메뉴 시각 `mentioned_sec`(영상 분석은 화면 첫 등장, 자막 분석은 자막 시각 추정 — 한 칸으로 통합)). 맛 평가·팁·가격은 저장하지 않음 |
 | `restaurant_tags` | 음식 검색용 태그 (티본 스테이크, 스시 등) |
@@ -299,7 +305,8 @@ uv run langgraph dev
 - [x] Streamlit 챗봇 UI(10/13): `uv run streamlit run src/streamlit_app.py`. 토큰 단위 스트리밍, 도구 호출 진행 표시, 대화 기억(thread_id), 예시 질문·새 대화 버튼. 추천 식당은 맛집 앱 스타일 카드로 표시(영상 썸네일, 미슐랭 배지, 평점·가격대, 셰프, 영상·지도 버튼, 검색에 걸린 메뉴 설명). 카드는 LLM 글이 아니라 도구 결과(JSON)로 그리고(`src/chatbot/cards.py`), 그래프는 `build_graph(cards=True)`로 본문을 요약·추천 이유만 쓰게 한다. 테마는 `.streamlit/config.toml`
 - [x] 추천 결과 지도(10/13): 카드 위에 번호 마커 지도(Leaflet + OpenStreetMap, `src/chatbot/maps.py`), 마커 말풍선에 이름·평점·미슐랭·영상/지도 링크. 상세 팝업에도 그 식당 위치 지도
 - [x] 식당 상세 팝업(10/13): 카드의 "상세 정보 보기"를 누르면 `st.dialog`로 한 식당의 정보를 한눈에 보여 준다(`src/chatbot/detail.py` + `streamlit_app.py`). 영상 속 메뉴 타임라인(앱 안에서 유튜브 영상을 바로 재생하고, 메뉴를 누르면 그 시각으로 이동해 재생하며 재생 중인 메뉴를 강조. 유튜브 IFrame API를 `components.html`로 임베드, 임베드가 막힌 영상은 "YouTube에서 보기" 링크로 대체. 코스 단계·조리 특징 설명), 영상 소개(컨셉·분위기·키포인트·총평), 음료, 기본 정보(주소·전화·가격·영업시간·웹사이트·지도). 메뉴별 맛 후기는 저장하지 않아 조리 특징만 보여 준다
-- [ ] n8n 자동화
+- [x] n8n 자동화 1차(10/14): `process_video.py`(영상 1개를 gate -> places -> michelin_check -> captions -> extract -> postprocess -> load, 상태 `video_queue`), `src/api/pipeline_server.py`(n8n이 호출하는 HTTP API), `n8n/`(로컬 Docker, 워크플로우: 새 영상 6시간마다 처리·미슐랭 매일 채우기). 수동 자막 영상 2개와 자동 자막 영상 1개를 gate부터 DB 적재까지 처리해 확인했고 n8n 수동 실행·메일 알림·API 서버 다운 시 실패 알림도 확인했다. 사용법은 3-1, 3-2
+- [ ] n8n 스케줄 워크플로우 활성화(켜려면 호스트의 `pipeline_server.py`와 Docker가 계속 켜져 있어야 함), 자동 자막(Gemini) 경로를 n8n에서 실행해 확인(영상당 약 15분)
 
 ## 알려진 이슈 / TODO
 
