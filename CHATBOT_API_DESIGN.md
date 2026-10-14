@@ -138,7 +138,7 @@ interface Video { video_id: string, title: string, url: string, thumbnail: strin
 
 DB 행과 도구 결과(LLM이 보는 JSON)를 위 형식으로 바꾸는 곳이다. **LLM에게 가는 도구 결과는 건드리지 않는다**(평가셋 점수가 바뀔 수 있다). API용 필드만 변환 계층에서 만든다.
 
-- `videos`: 지금 문자열을 쪼개지 않고, `summarize()`에 **영상 목록을 JSON으로 집계한 컬럼을 추가**한다(`json_agg`). 기존 `videos` 문자열은 LLM용으로 그대로 둔다. 제목에 ` | `가 있어도 안전하다.
+- `videos`: 도구 결과의 문자열을 쪼개지 않고, 변환 계층이 **영상 목록을 DB에서 따로 조회**한다(`serialize.videos_of`, 식당 여러 곳을 쿼리 한 번으로). `summarize()`와 LLM이 보는 도구 결과는 전혀 바꾸지 않는다(처음에는 `summarize()` SQL에 JSON 컬럼을 추가하려 했으나, 그러면 LLM 입력에도 필드가 늘어 평가 점수가 흔들릴 수 있어 따로 조회하는 방식으로 바꿨다). 제목에 ` | `가 있어도 안전하다.
 - `region`, `tags`: 문자열을 배열로 바꾼다.
 - `michelin`: 라벨 문자열("미슐랭 1스타")을 `{grade, label}`로. "미슐랭 아님"은 `null`.
 - `hours`: `datetime.time`을 `"HH:MM"` 문자열로(JSON 직렬화 오류 방지).
@@ -195,7 +195,7 @@ DB 행과 도구 결과(LLM이 보는 JSON)를 위 형식으로 바꾸는 곳이
 
 | 단계 | 내용 | 확인 방법 |
 |---|---|---|
-| 0 | `serialize.py`, `schemas.py` 작성. `summarize()`에 영상 JSON 집계 컬럼 추가(LLM용 문자열은 유지) | 기존 평가셋(`run_eval.py --no-geo`)이 같은 점수, 변환 결과를 단위 시험 |
+| 0 (완료 10/14) | `schemas.py`, `serialize.py` 작성, `test_serialize.py`로 시험(단위 4 + 실제 데이터 1). `tools.py`·`summarize()`는 수정하지 않아 LLM 입력이 그대로이므로 평가셋은 다시 돌리지 않았다 | `uv run python src/chatbot/test_serialize.py` 5/5 통과 |
 | 1 | `chat_server.py`: `/api/chat`(SSE), `/api/restaurants/{id}`, `/api/health`, 연결 풀, 취소 처리 | `curl -N`과 파이썬 클라이언트로 이벤트 순서 확인, 실제 질문 몇 개 |
 | 2 | Next.js(`web/`): 채팅 화면, 스트리밍 표시, 카드, 지도(react-leaflet), BFF Route Handler | 브라우저에서 예시 질문 6개 |
 | 3 | 상세 팝업: 유튜브 IFrame API 플레이어 + 메뉴 타임라인(누르면 `seekTo`), 영업시간, 마커 클릭으로 상세 열기 | Streamlit 팝업과 같은 정보가 나오는지 |
@@ -207,5 +207,5 @@ DB 행과 도구 결과(LLM이 보는 JSON)를 위 형식으로 바꾸는 곳이
 
 - **응답 속도**: 한 질문에 LLM 호출이 여러 번이라 수 초~십수 초다. 스트리밍과 `status` 이벤트로 체감을 줄이되, 근본적으로는 호출 수를 줄이는 별도 작업이 필요할 수 있다.
 - **비용**: 공개 시 OpenAI와 Places 비용이 요청 수에 비례한다. 요청 제한이 필수다.
-- **평가셋 영향**: 변환 계층은 LLM 입력을 바꾸지 않게 설계했지만, `summarize()`의 SQL을 건드리므로 단계 0 직후 평가셋을 다시 돌려 확인한다(Places 한도 때문에 `--no-geo`).
+- **평가셋 영향**: 변환 계층은 LLM이 보는 도구 결과를 건드리지 않는다(`tools.py` 무수정). 이후 단계에서 `tools.py`·`graph.py`를 고치게 되면 평가셋을 다시 돌려 확인한다(Places 한도 때문에 `--no-geo`).
 - **프론트 재구현 범위**: 상세 팝업의 타임라인·플레이어 동기화(재생 중 메뉴 강조)가 가장 손이 많이 간다. 단계 3에서 별도로 다룬다.
