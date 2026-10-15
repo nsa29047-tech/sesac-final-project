@@ -23,6 +23,7 @@ from openai import OpenAI
 from pydantic import BaseModel, Field, PrivateAttr
 
 from chatbot import geoshape
+from chatbot.regions import expand_province
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "db"))
 import rag_search as rs  # noqa: E402  (connect, search)
 from category_rules import BROAD  # noqa: E402  (대분류 목록)
@@ -56,7 +57,7 @@ class FilterArgs(BaseModel):
     """식당을 좁히는 정형 조건. 사용자가 직접 말한 조건만 채우고, 말하지 않은 조건은 절대 추측해서 넣지 않는다(특히 country_code·region)."""
     country_code: Optional[str] = Field(None, description="ISO 2자리 국가 코드 (사용자가 나라를 말했을 때만. 한국 KR, 일본 JP, 프랑스 FR, 스페인 ES, 미국 US, 이탈리아 IT 등). 홍콩은 HK지만 '홍콩식'은 query에 쓴다")
     exclude_country_code: Optional[str] = Field(None, description="이 국가는 뺀다. '해외'·'한국 말고'는 KR")
-    region: Optional[str] = Field(None, description="국내 지역명(서울, 마포구, 연남동, 부산 등). 시/구/동 어느 단계든 된다. 해외 도시, 'OO역 근처', 강·하천·공원 이름(한강, 청계천)에는 쓰지 말고 city를 쓴다")
+    region: Optional[str] = Field(None, description="국내 지역명(서울, 마포구, 연남동, 부산 등). 시/구/동 어느 단계든 되고, 제주도·강원도·경북 같은 도 단위도 된다(도구가 소속 시·군으로 펼친다). 해외 도시, 'OO역 근처', 강·하천·공원 이름(한강, 청계천)에는 쓰지 말고 city를 쓴다")
     city: Optional[str] = Field(None, description="해외 도시나 역·랜드마크·강 이름(파리, 도쿄, 삿포로, 바르셀로나, 강남역, 오도리 공원, 한강, 청계천). 사용자가 말한 지명 그대로 쓴다(강남역을 강남으로 줄이지 않는다). 도구가 좌표를 조회해 반경 검색한다. 도시를 말했으면 country_code가 아니라 이것을 쓴다")
     michelin: Optional[List[Literal["BIB_GOURMAND", "1_STAR", "2_STARS", "3_STARS", "SELECTED"]]] = Field(None, description="미슐랭 등급 목록. '미슐랭 스타'는 [1_STAR,2_STARS,3_STARS], '미슐랭'만 말하면 전체 5개")
     min_price_level: Optional[int] = Field(None, ge=0, le=4, description="가격대 하한 (0 무료 ~ 4 매우 비쌈, Google 기준). 비싼·고급·럭셔리는 3")
@@ -85,7 +86,10 @@ def build_where(f: FilterArgs):
         c.append("r.country_code = %s"); p.append(f.country_code.upper())
     if f.exclude_country_code:
         c.append("r.country_code <> %s"); p.append(f.exclude_country_code.upper())
-    if f.region:
+    cities = expand_province(f.region) if f.region else None
+    if cities:   # 제주도·강원도 같은 도 단위는 DB의 region_1(시·군)과 맞지 않아 소속 시·군으로 펼쳐 비교한다
+        c.append("r.region_1 ~ %s"); p.append("^(" + "|".join(cities) + ")(시|군)$")
+    elif f.region:
         c.append("(r.region_1 ILIKE %s OR r.region_2 ILIKE %s OR r.region_3 ILIKE %s)"); p += [f"%{f.region}%"] * 3
     if f.michelin:
         c.append("EXISTS (SELECT 1 FROM michelin_status m WHERE m.restaurant_id = r.restaurant_id AND m.is_michelin AND m.latest_grade = ANY(%s))")
