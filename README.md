@@ -32,7 +32,7 @@
 sesac-final-project/
 ├── src/
 │   ├── app.py                          # LangGraph 엔트리포인트 (chatbot.graph.build_graph)
-│   ├── chatbot/                        # 챗봇 에이전트: graph.py(ReAct 그래프+시스템 프롬프트), tools.py(find_restaurants·recommend_by_taste·get_restaurant_info·geocode_place), cli.py(터미널 대화), eval/(평가셋 cases.py + run_eval.py), schemas.py·serialize.py(챗봇 API 응답 형식과 변환 계층), test_serialize.py
+│   ├── chatbot/                        # 챗봇 에이전트: graph.py(ReAct 그래프+시스템 프롬프트), tools.py(find_restaurants·recommend_by_taste·get_restaurant_info·geocode_place), cli.py(터미널 대화), eval/(평가셋 cases.py + run_eval.py), schemas.py·serialize.py(챗봇 API 응답 형식과 변환 계층), test_serialize.py, geoshape.py(강·하천 같은 선형 지명을 OpenStreetMap Nominatim에서 받아 선과의 거리로 검색), test_geoshape.py
 │   ├── pipeline/                       # 데이터 수집 파이프라인
 │   │   ├── common.py                   # 자막 추출 단계의 공통 코드(셰프 추출 chefs_for_store 포함): 경로·모델·OpenAI 클라이언트, load_stores, 시각 보정(fix_times), 평가어 제거(strip_generic), 영상 구간 나누기(video_parts), 코스 판단(detect_course), 음식 분류(classify_cuisine)
 │   │   ├── collect_video_urls.py       # 1. 채널 영상 URL 수집 (yt-dlp, 이분 탐색)
@@ -89,7 +89,7 @@ sesac-final-project/
 │       ├── rag_search.py               # 검색 모듈: SQL 필터 -> 벡터 후보 -> LLM 충족 판단(맞는 결과 없으면 빈 목록)
 │       └── test_rag.py                 # RAG 검색 테스트(12개 질문, 현재 범위 120곳)
 ├── n8n/                                # n8n 자동화: docker-compose.yml, build_workflows.py(워크플로우 JSON 생성), workflows/(새 영상 처리·미슐랭 채우기·실패 알림)
-├── web/                                # Next.js 화면(10/14, 설계 CHATBOT_API_DESIGN.md 단계 2): 채팅(SSE 스트리밍), 식당 카드, 번호 마커 지도. 챗봇 API(src/api/chat_server.py)를 호출. 실행은 web/README.md, 5-2
+├── web/                                # Next.js 화면(10/14, 설계 CHATBOT_API_DESIGN.md 단계 2): 채팅(SSE 스트리밍), 식당 카드, 번호 마커 지도(카드에 없는 나머지 후보는 작은 주황 점). 챗봇 API(src/api/chat_server.py)를 호출. 실행은 web/README.md, 5-2
 ├── parse_apis/                         # Parse SDK 스캐폴드. 생성 코드는 git 제외(`uv run parse add`로 재생성)
 ├── data/                               # 산출물 (git 제외)
 │   ├── urls/                           # 채널 영상 URL 목록 (원본 / 통과 / 제외)
@@ -310,7 +310,7 @@ npm --prefix web install                  # 처음 한 번
 npm --prefix web run dev                  # http://localhost:3000
 ```
 
-Next.js 16(App Router) + Tailwind CSS 4 + react-leaflet. 질문을 보내면 도구 호출 진행("조건에 맞는 식당 찾는 중…")과 답변이 스트리밍되고, 답변이 끝나면 번호 마커 지도와 식당 카드가 나옵니다(카드 번호 = 마커 번호). 서버가 꺼져 있거나 연결이 끊기면 안내 문구를 보여 주고 다시 보낼 수 있습니다. 자세한 구조와 알려진 점은 `web/README.md`. 카드의 "상세 정보 보기" 또는 지도 마커 말풍선의 같은 버튼을 누르면 상세 팝업이 열립니다: 유튜브 플레이어와 메뉴 타임라인(메뉴를 누르면 그 시각으로 이동·재생, 재생 중 현재 메뉴 강조), 영상 속 소개·총평, 음료, 주소·가격·영업시간, 위치 지도. ESC·바깥 클릭·✕로 닫습니다.
+Next.js 16(App Router) + Tailwind CSS 4 + react-leaflet. 상단 바 + 채팅 + 오른쪽 결과 패널 구조입니다(좁은 화면에서는 결과가 답변 아래로 내려옵니다). 질문을 보내면 진행 단계 칩(조건 확인 → 식당 찾는 중 → 답변 작성)과 답변이 스트리밍되고, 답변은 식당 이름(주황)과 설명(회색)이 구분되어 나오며 이름을 누르면 상세가 열립니다. 답변이 끝나면 검색 조건 칩과 함께 번호 마커 지도와 식당 카드가 나옵니다(카드 번호 = 마커 번호 = 답변의 번호). 서버가 꺼져 있거나 연결이 끊기면 안내 문구를 보여 주고 다시 보낼 수 있습니다. 자세한 구조와 알려진 점은 `web/README.md`. 카드의 "상세 정보 보기" 또는 지도 마커 말풍선의 같은 버튼을 누르면 상세 팝업이 열립니다: 유튜브 플레이어와 메뉴 타임라인(메뉴를 누르면 그 시각으로 이동·재생, 재생 중 현재 메뉴 강조), 영상 속 소개·총평, 음료, 주소·가격·영업시간, 위치 지도. ESC·바깥 클릭·✕로 닫습니다.
 
 
 ## 진행 상황
@@ -338,6 +338,10 @@ Next.js 16(App Router) + Tailwind CSS 4 + react-leaflet. 질문을 보내면 도
 - [x] Streamlit 챗봇 UI(10/13): `uv run streamlit run src/streamlit_app.py`. 토큰 단위 스트리밍, 도구 호출 진행 표시, 대화 기억(thread_id), 예시 질문·새 대화 버튼. 추천 식당은 맛집 앱 스타일 카드로 표시(영상 썸네일, 미슐랭 배지, 평점·가격대, 셰프, 영상·지도 버튼, 검색에 걸린 메뉴 설명). 카드는 LLM 글이 아니라 도구 결과(JSON)로 그리고(`src/chatbot/cards.py`), 그래프는 `build_graph(cards=True)`로 본문을 요약·추천 이유만 쓰게 한다. 테마는 `.streamlit/config.toml`
 - [x] 추천 결과 지도(10/13): 카드 위에 번호 마커 지도(Leaflet + OpenStreetMap, `src/chatbot/maps.py`), 마커 말풍선에 이름·평점·미슐랭·영상/지도 링크. 상세 팝업에도 그 식당 위치 지도
 - [x] 식당 상세 팝업(10/13): 카드의 "상세 정보 보기"를 누르면 `st.dialog`로 한 식당의 정보를 한눈에 보여 준다(`src/chatbot/detail.py` + `streamlit_app.py`). 영상 속 메뉴 타임라인(앱 안에서 유튜브 영상을 바로 재생하고, 메뉴를 누르면 그 시각으로 이동해 재생하며 재생 중인 메뉴를 강조. 유튜브 IFrame API를 `components.html`로 임베드, 임베드가 막힌 영상은 "YouTube에서 보기" 링크로 대체. 코스 단계·조리 특징 설명), 영상 소개(컨셉·분위기·키포인트·총평), 음료, 기본 정보(주소·전화·가격·영업시간·웹사이트·지도). 메뉴별 맛 후기는 저장하지 않아 조리 특징만 보여 준다
+- [x] 강·하천 근처 검색(10/15): "한강 근처"가 지명 좌표 한 점(여의도한강공원)+반경 3km로 처리돼 청담 쪽 미슐랭 식당이 빠졌다. `chatbot/geoshape.py`가 `city`를 Nominatim에서 조회해 waterway(강·하천)면 선 지오메트리로 식당과 선 사이 최단 거리(기본 1km, 사용자가 거리를 말하면 그 값)를 계산해 거른다(`tools.resolve_river`, 결과 `data/shape_cache.json` 캐시, 강이 아니면 기존 Places 좌표 방식). "센 강"처럼 띄어 쓴 이름은 붙여 조회하고, 모델이 강 이름을 `region`에 넣어도 코드가 `city`로 옮긴다. 판단 단계(`judge_candidates`)는 요청에 음식 종류가 없으면 후보를 모두 남기도록 코드로 보장한다(`requested_food`; 프롬프트만으로는 위치 때문에 임의로 탈락시켰다). 한계: waterway만 처리하고 해안선·공원·도로는 점+반경, OSM 선은 거칠다. 시험 `src/chatbot/test_geoshape.py`, 평가 케이스 `sql-near-hangang`
+- [x] 전체 건수·더 보기(10/15): `find_restaurants`가 조건에 맞는 전체 수 `total`·`has_more`를 돌려주고 `offset`으로 이어 조회한다(기본 limit 3, 동점은 `restaurant_id`로 순서 고정). 답변은 "N곳 중 3곳"이라 밝히고 "더 보여줘"에 다음 순위를 보여 준다. 판단 단계에서 일부가 빠져 전체 수를 모르면 숫자를 말하지 않는다. `recommend_by_taste`는 아직 해당 없음
+- [x] 지도에 전체 표시(10/15): 카드는 답변에서 소개한 곳만, 지도에는 조건에 맞는 전체(최대 60곳)를 찍는다. `find_restaurants`가 `content_and_artifact`로 모델 입력과 별개의 `map_ids`를 서버에 넘기고 `restaurants` 이벤트의 `map_extra`로 프론트에 보낸다. 카드 식당은 번호 마커, 나머지는 번호 없는 작은 주황 점(말풍선·상세 팝업 가능)
+- [ ] 검색 과정 보기(제안, 미구현): 도구가 SQL 조건·전체 수, 벡터 후보(거리), LLM 판단의 통과·탈락 이유를 artifact로 기록하고 `trace` 이벤트와 웹의 접이식 패널·CLI `--trace`로 보여 준다
 - [x] n8n 자동화 1차(10/14): `process_video.py`(영상 1개를 gate -> places -> michelin_check -> captions -> extract -> postprocess -> load, 상태 `video_queue`), `src/api/pipeline_server.py`(n8n이 호출하는 HTTP API), `n8n/`(로컬 Docker, 워크플로우: 새 영상 6시간마다 처리·미슐랭 매일 채우기). 수동 자막 영상 2개와 자동 자막 영상 1개를 gate부터 DB 적재까지 처리해 확인했고 n8n 수동 실행·메일 알림·API 서버 다운 시 실패 알림도 확인했다. 사용법은 3-1, 3-2
 - [ ] n8n 스케줄 워크플로우 활성화(켜려면 호스트의 `pipeline_server.py`와 Docker가 계속 켜져 있어야 함), 자동 자막(Gemini) 경로를 n8n에서 실행해 확인(영상당 약 15분)
 
