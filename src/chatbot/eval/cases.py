@@ -86,6 +86,10 @@ CASES = [
          gold_sql=near(37.4979, 127.0276, 3)),
     dict(id="sql-near-gangnam-jp", kind="sql", q="강남역 근처 일식집 추천해줘", tools=FIND + TASTE, geo=True,
          gold_sql=f"SELECT restaurant_id FROM ({near(37.4979, 127.0276, 3.5)}) n WHERE restaurant_id IN (SELECT restaurant_id FROM restaurants WHERE category_broad ~ '일식')"),
+    dict(id="sql-region-jeju", kind="sql", q="제주도 맛집 알려줘", tools=FIND + TASTE,
+         gold_sql="SELECT restaurant_id FROM restaurants WHERE region_1 IN ('제주시', '서귀포시')"),   # 도 단위 지역명은 시·군으로 펼쳐 찾는다
+    dict(id="sql-near-hangang", kind="sql", q="서울 한강 근처 미슐랭 스타 식당 알려줘", tools=FIND + TASTE,
+         gold_sql=f"SELECT restaurant_id FROM restaurants WHERE region_1 ILIKE '%서울%' AND restaurant_id IN ({michelin(STARS)})"),   # 강변 거리는 test_geoshape.py에서 확인하고, 여기서는 서울 스타 식당 안에서 1곳 이상 나오는지만 본다
     dict(id="sql-near-paris", kind="sql", q="파리에 있는 식당", tools=FIND + TASTE, geo=True,
          gold_sql=near(48.8566, 2.3522, 30) + " UNION SELECT restaurant_id FROM restaurants WHERE region_1 ILIKE '%paris%'"),
     dict(id="sql-2star-korean", kind="sql", q="미슐랭 2스타 이상 한식당", tools=FIND + TASTE,
@@ -132,6 +136,7 @@ CASES = [
     dict(id="info-mingles-hours", kind="info", q="밍글스는 몇 시에 문 열어?", tools=INFO,
          contains_sql="SELECT to_char(h.open_time, 'HH24:MI') FROM restaurant_hours h JOIN restaurants r USING (restaurant_id) "
                       "WHERE r.name_ko = '밍글스' AND h.open_time IS NOT NULL"),
+    dict(id="info-no-notes", kind="info", q="거부갈비 정보", tools=INFO, contains=["거부갈비"]),   # 영상 분석 노트가 없는 식당도 정보를 조회할 수 있어야 한다(라우터가 잡담으로 보내면 실패)
     dict(id="info-mingles-michelin", kind="info", q="밍글스 미슐랭 등급이 뭐야?", tools=INFO, contains=["3스타", "3 스타", "세 개", "삼 스타"]),
 
     # ---- 범위 밖 ----

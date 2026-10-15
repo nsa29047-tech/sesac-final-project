@@ -42,14 +42,66 @@ class Judgement(BaseModel):
     relevant_ids: List[int]
 
 
-def connect():
-    """읽기 전용 계정(READONLY_POSTGRES_URI)으로만 접속한다. 변수가 없으면 관리자 계정(POSTGRES_URI)으로 넘어가지 않고 실행을 멈춘다.
-    챗봇이 조용히 쓰기 권한으로 동작하는 일을 막기 위해서다(적재·정리 스크립트는 이 함수를 쓰지 않고 POSTGRES_URI 를 직접 쓴다)."""
+_pool = None   # enable_pool() 을 부르면 connect() 가 연결 풀을 쓴다(챗봇 API 서버용). 기본은 호출마다 새 연결.
+
+
+class PooledConnection:
+    """풀에서 빌린 연결. close() 는 연결을 닫지 않고 풀에 돌려준다(호출하는 쪽 코드는 그대로 conn.close() 를 쓴다)."""
+
+    def __init__(self, pool, conn):
+        self._pool, self._conn, self._returned = pool, conn, False
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def close(self):
+        if self._returned:
+            return
+        self._returned = True
+        broken = self._conn.closed != 0
+        if not broken:
+            try:
+                self._conn.rollback()   # 쓰다 만 트랜잭션을 정리하고 돌려준다
+            except psycopg2.Error:
+                broken = True
+        self._pool.putconn(self._conn, close=broken)
+
+
+def enable_pool(minconn: int = 1, maxconn: int = 8):
+    """연결 풀을 켠다. 읽기 전용 계정 규칙은 그대로다(풀의 접속 문자열도 READONLY_POSTGRES_URI)."""
+    global _pool
+    if _pool is None:
+        from psycopg2.pool import ThreadedConnectionPool
+        _pool = ThreadedConnectionPool(minconn, maxconn, _readonly_uri(), keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=3)
+    return _pool
+
+
+def _readonly_uri() -> str:
     uri = os.environ.get("READONLY_POSTGRES_URI")
     if not uri:
         raise RuntimeError("READONLY_POSTGRES_URI 가 없습니다. 챗봇은 읽기 전용 계정으로만 DB에 접속합니다(.env 에 설정하세요. 계정 생성: src/db/create_readonly_role.sql). "
                            "관리자 계정(POSTGRES_URI)으로는 접속하지 않습니다.")
-    return psycopg2.connect(uri)
+    return uri
+
+
+def connect():
+    """읽기 전용 계정(READONLY_POSTGRES_URI)으로만 접속한다. 변수가 없으면 관리자 계정(POSTGRES_URI)으로 넘어가지 않고 실행을 멈춘다.
+    챗봇이 조용히 쓰기 권한으로 동작하는 일을 막기 위해서다(적재·정리 스크립트는 이 함수를 쓰지 않고 POSTGRES_URI 를 직접 쓴다).
+    풀이 켜져 있으면 풀에서 빌린 연결(PooledConnection)을 돌려준다."""
+    if _pool is None:
+        return psycopg2.connect(_readonly_uri())
+    for _ in range(3):
+        conn = _pool.getconn()
+        try:
+            if conn.closed == 0:
+                with conn.cursor() as cur:   # 오래 놀던 연결이 서버 쪽에서 끊겼는지 확인한다
+                    cur.execute("SELECT 1")
+                conn.rollback()
+                return PooledConnection(_pool, conn)
+        except psycopg2.Error:
+            pass
+        _pool.putconn(conn, close=True)
+    raise RuntimeError("DB 연결을 얻지 못했습니다")
 
 
 def candidates(cur, client, query, where="TRUE", params=None, chunk_type=None, k=CANDIDATES):

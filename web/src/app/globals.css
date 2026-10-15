@@ -1,0 +1,147 @@
+@import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
+@import "tailwindcss";
+
+:root {
+  --background: #faf8f6;
+  --foreground: #1f1a17;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-brand: #ff5a3c;
+  --color-brand-dark: #e0481f;
+  --color-brand-ink: #c4411c; /* 흰 배경 위의 주황 글자(대비 확보) */
+  --color-brand-soft: #fff3ef;
+  --color-brand-line: #ffd2c5;
+  --color-panel: #f4f1ed;
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  letter-spacing: -0.011em; /* 한글 본문이 너무 벌어져 보이지 않게 */
+}
+
+/* 답변 본문(마크다운). 식당 목록은 번호 배지 + 이름(진하게, 주황) + 설명(연한 회색)으로 나눈다 */
+.answer p {
+  margin: 0 0 0.75em;
+  color: #3f3a35;
+}
+.answer p:last-child {
+  margin-bottom: 0;
+}
+.answer .md-ol {
+  counter-reset: n;
+  margin: 0.6rem 0 0.9rem;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.95rem;
+}
+.answer .md-ol > li {
+  counter-increment: n;
+  position: relative;
+  padding-left: 2.5rem;
+}
+.answer .md-ol > li::before {
+  content: counter(n);
+  position: absolute;
+  left: 0;
+  top: 0.05rem;
+  display: flex;
+  height: 1.6rem;
+  width: 1.6rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: var(--color-brand);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.answer .md-ul {
+  margin: 0.5rem 0 0.9rem;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.4rem;
+}
+.answer .li-name {
+  font-weight: 700;
+  color: var(--color-brand-ink);
+}
+.answer .li-name button {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+}
+.answer .li-name button:hover {
+  text-decoration-color: currentColor;
+}
+.answer .li-desc {
+  color: #6f675f;
+  font-size: 0.94rem;
+}
+.answer .md-ol .li-name {
+  display: block;
+  font-size: 1.06rem;
+  line-height: 1.4;
+}
+.answer .md-ol .li-desc {
+  display: block;
+  margin-top: 0.15rem;
+  line-height: 1.65;
+}
+.answer .md-ul .li-name {
+  margin-right: 0.45rem;
+  font-size: 0.86rem;
+  color: #8a8279;
+}
+.answer strong {
+  font-weight: 700;
+  color: #1f1a17;
+}
+
+/* 지도 마커(번호 핀)와 말풍선 링크 */
+.map-pin {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #ff5a3c;
+  color: #fff;
+  font-weight: 800;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.map-pin-dim {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ff5a3c; /* 번호 마커(.map-pin)와 같은 색 */
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.map-pin-one {
+  background: #e0481f;
+}
+.map-popup-link {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #e0481f !important;
+  text-decoration: none;
+  border: 1px solid #ffd2c5;
+  border-radius: 999px;
+  padding: 3px 10px;
+}
