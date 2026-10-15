@@ -20,8 +20,9 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
+from chatbot import geoshape
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "db"))
 import rag_search as rs  # noqa: E402  (connect, search)
 from category_rules import BROAD  # noqa: E402  (대분류 목록)
@@ -55,8 +56,8 @@ class FilterArgs(BaseModel):
     """식당을 좁히는 정형 조건. 사용자가 직접 말한 조건만 채우고, 말하지 않은 조건은 절대 추측해서 넣지 않는다(특히 country_code·region)."""
     country_code: Optional[str] = Field(None, description="ISO 2자리 국가 코드 (사용자가 나라를 말했을 때만. 한국 KR, 일본 JP, 프랑스 FR, 스페인 ES, 미국 US, 이탈리아 IT 등). 홍콩은 HK지만 '홍콩식'은 query에 쓴다")
     exclude_country_code: Optional[str] = Field(None, description="이 국가는 뺀다. '해외'·'한국 말고'는 KR")
-    region: Optional[str] = Field(None, description="국내 지역명(서울, 마포구, 연남동, 부산 등). 시/구/동 어느 단계든 된다. 해외 도시나 'OO역 근처'에는 쓰지 말고 city를 쓴다")
-    city: Optional[str] = Field(None, description="해외 도시나 역·랜드마크 이름(파리, 도쿄, 삿포로, 바르셀로나, 강남역, 오도리 공원). 사용자가 말한 지명 그대로 쓴다(강남역을 강남으로 줄이지 않는다). 도구가 좌표를 조회해 반경 검색한다. 도시를 말했으면 country_code가 아니라 이것을 쓴다")
+    region: Optional[str] = Field(None, description="국내 지역명(서울, 마포구, 연남동, 부산 등). 시/구/동 어느 단계든 된다. 해외 도시, 'OO역 근처', 강·하천·공원 이름(한강, 청계천)에는 쓰지 말고 city를 쓴다")
+    city: Optional[str] = Field(None, description="해외 도시나 역·랜드마크·강 이름(파리, 도쿄, 삿포로, 바르셀로나, 강남역, 오도리 공원, 한강, 청계천). 사용자가 말한 지명 그대로 쓴다(강남역을 강남으로 줄이지 않는다). 도구가 좌표를 조회해 반경 검색한다. 도시를 말했으면 country_code가 아니라 이것을 쓴다")
     michelin: Optional[List[Literal["BIB_GOURMAND", "1_STAR", "2_STARS", "3_STARS", "SELECTED"]]] = Field(None, description="미슐랭 등급 목록. '미슐랭 스타'는 [1_STAR,2_STARS,3_STARS], '미슐랭'만 말하면 전체 5개")
     min_price_level: Optional[int] = Field(None, ge=0, le=4, description="가격대 하한 (0 무료 ~ 4 매우 비쌈, Google 기준). 비싼·고급·럭셔리는 3")
     max_price_level: Optional[int] = Field(None, ge=0, le=4, description="가격대 상한. 저렴한 곳은 2")
@@ -68,7 +69,8 @@ class FilterArgs(BaseModel):
     open_time: Optional[str] = Field(None, description="'HH:MM' (식당 현지 시간). 이 요일·시각에 영업 중인 식당만. 휴무 요일 자체를 물으면 open_time은 '12:00'처럼 낮 시간을 준다")
     near_lat: Optional[float] = Field(None, description="반경 검색 기준 위도 (geocode_place 결과)")
     near_lng: Optional[float] = Field(None, description="반경 검색 기준 경도")
-    radius_km: Optional[float] = Field(None, gt=0, le=50, description="city·near_lat/near_lng 기준 반경(km). 비우면 도시는 20km, 역·랜드마크는 3km")
+    radius_km: Optional[float] = Field(None, gt=0, le=50, description="city·near_lat/near_lng 기준 반경(km). 비우면 도시는 20km, 역·랜드마크는 3km, 강·하천은 강변 1km. 사용자가 거리를 말했을 때만 지정한다")
+    _near_ids: Optional[List[int]] = PrivateAttr(default=None)   # city가 강·하천이면 강변 반경 안의 식당 id (모델에는 노출하지 않는다)
 
 
 # 좌표 간 거리(km). 파라미터 순서: lat, lng, lat
@@ -110,6 +112,8 @@ def build_where(f: FilterArgs):
                  "AND h.open_time IS NOT NULL AND ((h.close_time > h.open_time AND %s::time >= h.open_time AND %s::time < h.close_time) "
                  "OR (h.close_time <= h.open_time AND (%s::time >= h.open_time OR %s::time < h.close_time))))")
         p += [f.open_day, *([f.open_time] * 4)]
+    if f._near_ids is not None:
+        c.append("r.restaurant_id = ANY(%s)"); p.append(f._near_ids)
     if f.near_lat is not None and f.near_lng is not None:
         c.append(f"{DIST_SQL} <= %s"); p += [f.near_lat, f.near_lng, f.near_lat, f.radius_km or 2.0]
     return " AND ".join(c), p
@@ -156,6 +160,7 @@ def last_user_text(state) -> str:
 
 
 class Picked(BaseModel):
+    requested_food: Optional[str]   # 요청에 음식 종류·가게 종류가 있으면 그 말, 없으면 null (이 칸을 먼저 채우게 해서 ids 판단의 근거로 삼는다)
     ids: List[int]
 
 
@@ -170,29 +175,38 @@ def judge_candidates(request: str, restaurants: list) -> list:
         model=rs.JUDGE_MODEL, temperature=0, seed=42, response_format=Picked,
         messages=[{"role": "system", "content":
                    "사용자 요청에 대해 후보 식당이 실제로 요청에 맞는지 고른다. 지역·미슐랭·가격대·영업시간·거리는 이미 SQL로 걸렀으니 충족으로 본다. "
+                   "요청의 장소 이름(한강·센 강·강남역·파리 등)과 '근처·주변' 같은 위치 표현은 판단 대상이 아니다. 위치는 이미 좌표·강변 거리로 걸렀으니 후보가 그 장소와 가까운지 따지지 말고, 위치를 이유로 제외하지 않는다. 위치 말을 모두 지우고 남는 요청(음식 종류 등)만 본다. "
                    "요청에 음식 종류나 스타일(일식, 한식, 소고기 전문점, 이탈리안 등)이 있을 때만 그것이 후보의 분류·태그와 다른 식당을 제외한다. 요청에 음식 종류가 없으면(예: '빕 구르망 식당', '평점 높은 식당') 모든 후보를 남긴다. 분류 이름 자체를 묻는 요청(예: '기타로 분류된 식당', '일식 식당')은 후보의 대분류·세부 분류가 그 이름과 같으면 충족이다. "
-                   "맞는 식당의 번호만 ids에 넣고, 하나도 없으면 빈 배열을 준다."},
+                   "먼저 requested_food에 요청의 음식 종류·가게 종류를 쓰고(위치·거리·미슐랭·가격·평점 표현은 음식 종류가 아니다, 없으면 null), 맞는 식당의 번호만 ids에 넣는다. 하나도 없으면 빈 배열을 준다."},
                   {"role": "user", "content": f"요청: {request}\n\n{shown}"}])
-    keep = set(res.choices[0].message.parsed.ids)
+    parsed = res.choices[0].message.parsed
+    if not parsed.requested_food:   # 음식 종류가 없는 요청(지역·거리·미슐랭만)이면 모델이 ids를 어떻게 골랐든 모두 남긴다(위치 때문에 임의로 탈락시키는 일을 막는다)
+        return restaurants
+    keep = set(parsed.ids)
     return [r for i, r in enumerate(restaurants, 1) if i in keep]
 
 
 class FindArgs(FilterArgs):
     state: Annotated[Any, InjectedState] = Field(default=None, description="(자동 주입) 대화 상태. 모델이 채우지 않는다")   # 사용자의 마지막 말을 도구가 직접 읽어 결과 확인에 쓴다
     sort_by: Literal["rating", "price_low", "price_high", "distance"] = Field("rating", description="정렬: 평점 높은 순 / 가격 낮은 순 / 가격 높은 순 / 가까운 순(near_lat·near_lng 필요)")
-    limit: int = Field(5, ge=1, le=MAX_RESULTS, description="돌려줄 식당 수")
+    limit: int = Field(3, ge=1, le=MAX_RESULTS, description="돌려줄 식당 수(답변에 보여 줄 수와 같게. 기본 3)")
+    offset: int = Field(0, ge=0, description="앞에서 건너뛸 식당 수. '더 보여줘'·'다른 곳'이면 같은 조건으로 지금까지 보여 준 식당 수를 넣는다")
 
 
-@tool(args_schema=FindArgs)
-def find_restaurants(sort_by: str = "rating", limit: int = 5, state: Any = None, **filters) -> str:
+MAP_MAX = 60   # 지도에 함께 찍을 식당 수 상한
+
+
+@tool(args_schema=FindArgs, response_format="content_and_artifact")
+def find_restaurants(sort_by: str = "rating", limit: int = 3, offset: int = 0, state: Any = None, **filters) -> str:
     """정형 조건(국가·지역·미슐랭·가격대·평점·음식 분류·영업 요일/시간·좌표 반경)만으로 식당을 찾는다. 분위기·메뉴·스타일(파인다이닝, 아늑한 등) 같은 취향 표현이 없는 질문에만 쓴다.
     취향 조건이 있으면 recommend_by_taste를 쓴다."""
+    # 반환은 (모델이 보는 JSON, artifact). artifact의 map_ids는 조건에 맞는 전체 식당 id로, 카드는 일부만 보여 주고 지도에는 전체를 찍는 데 서버가 쓴다(모델에는 가지 않는다)
     f = FilterArgs(**filters)
     request = last_user_text(state)
     if not f.michelin and re.search(r"미슐랭|미쉐린|michelin", request, re.I) and not re.search(r"아닌|말고|제외|없는", request):
         f.michelin = ["BIB_GOURMAND", "1_STAR", "2_STARS", "3_STARS", "SELECTED"]   # 모델이 michelin 을 빈 목록/None으로 빼먹어도 미슐랭 질문이면 등재 식당으로 거른다
     if err := resolve_city(f):
-        return err
+        return err, None
     where, params = build_where(f)
     order = {"rating": "r.rating DESC NULLS LAST, r.rating_count DESC NULLS LAST",
              "price_low": "r.price_level ASC NULLS LAST, r.rating DESC NULLS LAST",
@@ -200,18 +214,39 @@ def find_restaurants(sort_by: str = "rating", limit: int = 5, state: Any = None,
              "distance": None}[sort_by]
     if sort_by == "distance":
         if f.near_lat is None or f.near_lng is None:
-            return dumps({"error": "distance 정렬은 near_lat·near_lng가 필요합니다. geocode_place로 좌표를 먼저 구하세요."})
+            return dumps({"error": "distance 정렬은 near_lat·near_lng가 필요합니다. geocode_place로 좌표를 먼저 구하세요."}), None
         order = DIST_SQL
         order_params = [f.near_lat, f.near_lng, f.near_lat]
     else:
         order_params = []
-    rows = run_query(f"SELECT r.restaurant_id FROM restaurants r WHERE {where} ORDER BY {order} LIMIT %s",
-                     (*params, *order_params, max(limit * 3, 15)))   # 확인 단계에서 걸러질 것을 감안해 넉넉히 가져온다
+    total = run_query(f"SELECT count(*) AS n FROM restaurants r WHERE {where}", params)[0]["n"]
+    fetch = max(limit * 3, 15)   # 확인 단계에서 걸러질 것을 감안해 넉넉히 가져온다
+    rows = run_query(f"SELECT r.restaurant_id FROM restaurants r WHERE {where} ORDER BY {order}, r.restaurant_id LIMIT %s OFFSET %s",
+                     (*params, *order_params, fetch, offset))   # restaurant_id로 동점을 정해 '더 보기' 순서가 흔들리지 않게 한다
     found = summarize([r["restaurant_id"] for r in rows])
-    results = judge_candidates(request, found)[:limit]
-    if found and not results:
-        return dumps({"count": 0, "restaurants": [], "note": f"조건에 맞는 식당이 없습니다(후보 {len(found)}곳은 요청한 종류와 달라 제외)"})
-    return dumps({"count": len(results), "restaurants": results})
+    kept = judge_candidates(request, found)
+    results = kept[:limit]
+    if found and not kept:
+        return dumps({"count": 0, "restaurants": [], "note": f"조건에 맞는 식당이 없습니다(후보 {len(found)}곳은 요청한 종류와 달라 제외)"}), None
+    if not found:
+        return dumps({"count": 0, "restaurants": [], "total": total, "note": "더 보여 줄 식당이 없습니다" if offset else "조건에 맞는 식당이 없습니다"}), None
+    out = {"count": len(results), "restaurants": results, "offset": offset}
+    if len(kept) == len(found):   # 확인 단계에서 빠진 식당이 없어야 전체 수가 정확하다
+        out["total"] = total
+        out["has_more"] = total > offset + len(results)
+    elif offset + len(found) >= total:   # 남은 후보를 모두 확인했으면 정확하다
+        out["total"] = offset + len(kept)
+        out["has_more"] = len(kept) > limit
+    else:
+        out["has_more"] = True   # 일부만 확인해서 전체 수는 모른다(전체 수를 말하지 않는다)
+    # 지도에는 카드로 보여 주는 식당뿐 아니라 조건에 맞는 전체를 찍는다. 확인 단계에서 빠진 식당이 있으면 확인을 통과한 것만 쓴다
+    if len(kept) == len(found) and total > len(kept):
+        all_rows = run_query(f"SELECT r.restaurant_id FROM restaurants r WHERE {where} ORDER BY {order}, r.restaurant_id LIMIT %s",
+                             (*params, *order_params, MAP_MAX))
+        map_ids = [r["restaurant_id"] for r in all_rows]
+    else:
+        map_ids = [r["restaurant_id"] for r in kept]
+    return dumps(out), {"map_ids": map_ids}
 
 
 class TasteArgs(FilterArgs):
@@ -326,9 +361,28 @@ def geocode(place: str) -> dict:
     return result
 
 
+def resolve_river(f: FilterArgs) -> bool:
+    """city가 강·하천이면 선과의 거리로 식당 id를 정해 f._near_ids에 넣고 True. 아니면 False(기존 좌표·반경 방식)."""
+    cc = f.country_code or ("KR" if f.region else None)   # 한강처럼 다른 나라에 같은 이름이 있을 수 있어 나라를 알면 제한한다
+    lines = geoshape.lookup_lines(f.city, cc)
+    if not lines:
+        return False
+    radius = f.radius_km or 1.0
+    f.radius_km = radius
+    s, n, w, e = geoshape.bbox(lines, radius)
+    rows = run_query("SELECT restaurant_id, latitude::float8 AS lat, longitude::float8 AS lng FROM restaurants "
+                     "WHERE latitude BETWEEN %s AND %s AND longitude BETWEEN %s AND %s", (s, n, w, e))
+    f._near_ids = [r["restaurant_id"] for r in rows if geoshape.distance_km(r["lat"], r["lng"], lines) <= radius]
+    return True
+
+
 def resolve_city(f: FilterArgs):
     """f.city가 있으면 좌표로 바꿔 near_lat/near_lng/radius_km를 채운다(모델이 geocode 도구를 따로 부르지 않아도 된다). 실패하면 오류 JSON."""
+    if not f.city and f.region and re.search(r"(강|천|하천|river)$", f.region.strip(), re.I) and geoshape.lookup_lines(f.region, f.country_code or "KR"):
+        f.city, f.region = f.region, None   # 모델이 강 이름을 region에 넣어도(한강 등) DB 지역명에는 없으므로 city(강변 검색)로 옮긴다
     if not f.city or f.near_lat is not None:
+        return None
+    if resolve_river(f):
         return None
     g = geocode(f.city)
     if "error" in g:

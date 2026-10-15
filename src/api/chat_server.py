@@ -43,7 +43,7 @@ from chatbot.detail import fetch_detail  # noqa: E402
 from chatbot.graph import build_graph  # noqa: E402
 from chatbot.schemas import RestaurantDetail  # noqa: E402
 from chatbot.serialize import restaurant_cards, to_detail  # noqa: E402
-from chatbot.tools import run_query  # noqa: E402
+from chatbot.tools import run_query, summarize  # noqa: E402
 
 os.environ.pop("POSTGRES_URI", None)   # 챗봇 서버는 쓰기 권한 접속 문자열을 쓰지 않는다(rag_search.connect 도 READONLY_POSTGRES_URI 만 본다)
 
@@ -87,7 +87,7 @@ def _args_of(call: Dict[str, Any]) -> Dict[str, Any]:
 
 def run_graph(question: str, thread_id: str, put, cancelled: threading.Event) -> None:
     """작업 스레드: 그래프를 스트리밍하며 이벤트를 put(event, data)으로 내보낸다. Streamlit 의 stream_answer 와 같은 방식이다."""
-    text, found = "", {}
+    text, found, map_ids = "", {}, []
     try:
         for mode, data in graph.stream({"messages": [("user", question)]}, {"configurable": {"thread_id": thread_id}},
                                        stream_mode=["messages", "updates"]):
@@ -107,8 +107,14 @@ def run_graph(question: str, thread_id: str, put, cancelled: threading.Event) ->
                                 put("status", {"tool": call["name"], "args": _args_of(call)})
                         elif node == "tools" and isinstance(m, ToolMessage):
                             collect(m.content, found)
+                            artifact = m.artifact if isinstance(m.artifact, dict) else {}
+                            for i in artifact.get("map_ids", []):   # find_restaurants가 조건에 맞는 전체 식당을 지도용으로 따로 알려 준다
+                                if i not in map_ids:
+                                    map_ids.append(i)
         cards = restaurant_cards(pick(found, text))   # 답변에 이름이 나온 식당만, 처음 언급된 순서로
-        put("restaurants", {"restaurants": [c.model_dump(mode="json") for c in cards]})
+        shown = {c.restaurant_id for c in cards}
+        extra = restaurant_cards(summarize([i for i in map_ids if i not in shown])) if cards else []   # 카드로 소개하지 않았지만 조건에 맞는 식당(지도에만 표시)
+        put("restaurants", {"restaurants": [c.model_dump(mode="json") for c in cards], "map_extra": [c.model_dump(mode="json") for c in extra]})
         put("done", {"answer": text})
     except Exception as e:   # 키·DB·OpenAI 오류 등. 내부 정보는 응답에 넣지 않고 서버 로그에만 남긴다
         log.exception("chat failed")

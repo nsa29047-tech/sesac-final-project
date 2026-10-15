@@ -63,7 +63,7 @@ Next.js로 옮길 때 걸리는 점:
 |---|---|---|
 | `status` | `{"tool": "find_restaurants", "args": {"city": "강남역", "cuisine": "일식"}}` | 도구를 부를 때마다(0회 이상). 화면의 "검색 중" 표시용. 라벨 문구는 프론트가 가진다 |
 | `token` | `{"text": "강남역 근처에는 "}` | 답변의 일부(여러 번). 이어 붙여 보여 준다 |
-| `restaurants` | `{"restaurants": [Restaurant, ...]}` | 답변이 끝난 뒤 한 번. 카드와 지도에 쓴다. 답변에 이름이 나온 식당만, 처음 언급된 순서로, 최대 6곳 |
+| `restaurants` | `{"restaurants": [Restaurant, ...], "map_extra": [Restaurant, ...]}` | 답변이 끝난 뒤 한 번. `restaurants`는 카드와 번호 마커에 쓴다(답변에 이름이 나온 식당만, 처음 언급된 순서로, 최대 6곳). `map_extra`는 카드로 소개하지 않았지만 조건에 맞는 식당으로 지도에만 번호 없는 점으로 찍는다(없으면 빈 배열, `find_restaurants` 결과일 때만) |
 | `done` | `{"answer": "전체 답변 텍스트"}` | 정상 종료 |
 | `error` | `{"code": "...", "message": "..."}` | 오류. 이후 `done`은 오지 않는다 |
 
