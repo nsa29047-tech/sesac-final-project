@@ -1,12 +1,26 @@
 // 표시용 도우미. 서버의 도구 이름·인자를 사람이 읽는 문구로 바꾼다(Streamlit 의 TOOL_LABEL, ARG_LABEL 과 같은 문구).
 
-const TOOL_LABEL: Record<string, string> = {
-  find_restaurants: "조건에 맞는 식당 찾는 중",
-  recommend_by_taste: "취향에 맞는 식당 찾는 중",
+const STEP_LABEL: Record<string, string> = {
+  find_restaurants: "식당 찾는 중",
+  recommend_by_taste: "취향에 맞는 곳 찾는 중",
   get_restaurant_info: "식당 정보 확인 중",
 };
 
-const ARG_LABEL: Record<string, string> = {
+/** 도구 이름 -> 진행 단계 칩에 보여 줄 문구. */
+export function stepLabel(tool: string): string {
+  return STEP_LABEL[tool] ?? "검색 중";
+}
+
+const MICHELIN_LABEL: Record<string, string> = {
+  "1_STAR": "1스타",
+  "2_STARS": "2스타",
+  "3_STARS": "3스타",
+  BIB_GOURMAND: "빕 구르망",
+  SELECTED: "셀렉티드",
+};
+
+// 검색 조건 칩에 쓰는 인자 이름. 여기 없는 인자(limit, sort_by 등)는 보여 주지 않는다.
+const ARG_CHIP: Record<string, string> = {
   country_code: "국가",
   exclude_country_code: "제외 국가",
   region: "지역",
@@ -16,23 +30,37 @@ const ARG_LABEL: Record<string, string> = {
   max_price_level: "가격대 상한",
   min_rating: "최소 평점",
   cuisine: "분류",
-  has_chef: "셰프 정보",
-  course_only: "코스",
   open_day: "요일",
   open_time: "시각",
-  radius_km: "반경(km)",
   query: "검색어",
   chunk_type: "종류",
   name: "식당",
-  sort_by: "정렬",
-  limit: "개수",
 };
 
-export function describeCall(tool: string, args: Record<string, unknown>): string {
-  const parts = Object.entries(args)
-    .filter(([, v]) => v !== null && v !== "" && !(Array.isArray(v) && v.length === 0))
-    .map(([k, v]) => `${ARG_LABEL[k] ?? k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`);
-  return (TOOL_LABEL[tool] ?? tool) + (parts.length ? ` (${parts.join(", ")})` : "");
+/** 도구 인자 -> 검색 조건 칩 문구("지역 서울", "미슐랭 1스타·2스타·3스타"). */
+export function argChips(args: Record<string, unknown>): string[] {
+  const chips: string[] = [];
+  for (const [key, value] of Object.entries(args)) {
+    if (value === null || value === "" || value === false || (Array.isArray(value) && value.length === 0)) continue;
+    if (key === "has_chef") {
+      chips.push("셰프 정보");
+      continue;
+    }
+    if (key === "course_only") {
+      chips.push("코스");
+      continue;
+    }
+    const label = ARG_CHIP[key];
+    if (!label) continue;
+    const text =
+      key === "michelin" && Array.isArray(value)
+        ? value.map((v) => MICHELIN_LABEL[String(v)] ?? String(v)).join("·")
+        : Array.isArray(value)
+          ? value.join(", ")
+          : String(value);
+    chips.push(`${label} ${text}`);
+  }
+  return chips;
 }
 
 /** 답변 본문의 마크다운 링크를 없앤다. 링크는 카드의 버튼이 대신하므로 본문에 있으면 중복이다(서버 cards.strip_links 와 같은 규칙). */

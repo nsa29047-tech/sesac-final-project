@@ -46,16 +46,22 @@ export type ChatEvent =
   | { event: "thread"; data: { thread_id: string } }
   | { event: "status"; data: { tool: string; args: Record<string, unknown> } }
   | { event: "token"; data: { text: string } }
-  | { event: "restaurants"; data: { restaurants: Restaurant[] } }
+  | { event: "restaurants"; data: { restaurants: Restaurant[]; map_extra?: Restaurant[] } }   // map_extra: 카드로 소개하지 않았지만 조건에 맞아 지도에만 찍는 식당
   | { event: "done"; data: { answer: string } }
   | { event: "error"; data: { code: string; message: string } };
+
+export interface ToolCall {
+  tool: string;
+  args: Record<string, unknown>;
+}
 
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
   cards: Restaurant[];
-  statuses: string[]; // 도구 호출 진행 표시
+  mapExtra: Restaurant[]; // 지도에만 표시하는 나머지 식당
+  calls: ToolCall[]; // 이 답변을 만들려고 부른 도구(검색 조건 표시용)
   streaming: boolean;
   error?: string;
 }
