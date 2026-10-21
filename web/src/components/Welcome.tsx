@@ -25,7 +25,7 @@ export default function Welcome({ onPick }: { onPick: (q: string) => void }) {
         찾아 드릴까요?
       </h2>
       <p className="mt-3 text-[15px] text-neutral-500">
-        미식 유튜브 영상에 나온 식당 약 120곳 가운데서 지역, 미슐랭, 메뉴, 분위기로 골라 드려요.
+        미식 유튜브 영상에 나온 식당 약 200곳 가운데서 지역, 미슐랭, 메뉴, 분위기로 골라 드려요.
       </p>
       <div className="mt-8 grid gap-3 sm:grid-cols-2">
         {EXAMPLES.map(({ q, label, icon: Icon }) => (

@@ -1,5 +1,7 @@
 # 챗봇 에이전트 안내
 
+> **보관용 문서**: 작성 시점의 기록이라 현재 상태와 다를 수 있습니다(수치·구조가 낡았을 수 있음). 최신 내용은 [README](../../README.md)와 [개발 문서](../DEVELOPMENT.md)를 봅니다.
+
 미식 유튜브 영상에서 뽑은 식당 정보를 기반으로 맛집을 추천하는 챗봇 에이전트가 알아야 할 내용이다. 먼저 `README.md`, `src/db/restaurant_schema.sql`, `src/db/restaurant_chunks.sql`, `src/db/rag_search.py`를 읽는다. 설계 배경은 `RAG_DESIGN.md`에 있으며, 문서와 DB가 다르면 **DB가 맞다**.
 
 ## 1. 현재 데이터 범위

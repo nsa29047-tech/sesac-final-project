@@ -1,4 +1,4 @@
-// 챗봇 API 응답 형식. 서버의 src/chatbot/schemas.py 와 맞춘다(CHATBOT_API_DESIGN.md 4절).
+// 챗봇 API 응답 형식. 서버의 src/chatbot/schemas.py 와 맞춘다(docs/CHATBOT_API_DESIGN.md 4절).
 
 export interface Video {
   video_id: string;

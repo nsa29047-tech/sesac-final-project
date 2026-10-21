@@ -230,3 +230,8 @@ parse_apis/src/parse_apis/*
 
 # 발표 자료
 *.pptx
+
+# 개인 문서(발표 대본·이력서·PR 초안)
+PR_DESCRIPTION.md
+presentation_script.md
+resume_project.md
