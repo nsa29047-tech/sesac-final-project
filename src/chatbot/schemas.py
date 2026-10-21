@@ -1,7 +1,7 @@
 """챗봇 API의 응답 형식(Pydantic). 프론트(Next.js)와 맞추는 계약이며, FastAPI가 이 모델로 검증하고 /docs 를 만든다.
 
 LLM이 보는 도구 결과(JSON)와는 별개다. 도구 결과를 이 형식으로 바꾸는 일은 serialize.py 가 한다.
-설계: CHATBOT_API_DESIGN.md 3~4절.
+설계: docs/CHATBOT_API_DESIGN.md 3~4절.
 """
 from typing import List, Literal, Optional
 

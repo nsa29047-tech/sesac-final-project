@@ -1,6 +1,6 @@
 # 맛집 노트 웹 (Next.js)
 
-챗봇 HTTP API(`src/api/chat_server.py`)를 쓰는 화면이다. 설계는 루트의 `CHATBOT_API_DESIGN.md`.
+챗봇 HTTP API(`src/api/chat_server.py`)를 쓰는 화면이다. 설계는 `docs/CHATBOT_API_DESIGN.md`.
 Next.js 16(App Router, `cacheComponents`), React 19, Tailwind CSS 4, Leaflet(react-leaflet), react-markdown, lucide-react(아이콘), Pretendard(글꼴, npm 패키지로 자체 호스팅).
 
 > 이 Next.js 버전은 기존 지식과 다를 수 있다. 코드를 고치기 전에 `node_modules/next/dist/docs/` 의 해당 문서를 읽는다(`AGENTS.md`).

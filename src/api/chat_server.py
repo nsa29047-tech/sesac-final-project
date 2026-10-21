@@ -1,4 +1,4 @@
-"""맛집 챗봇 HTTP API (Next.js 프론트가 호출한다). 설계: CHATBOT_API_DESIGN.md
+"""맛집 챗봇 HTTP API (Next.js 프론트가 호출한다). 설계: docs/CHATBOT_API_DESIGN.md
 
 - POST /api/chat                SSE 스트리밍. 이벤트 순서: status(도구 호출, 0회 이상) -> token(답변 조각, 여러 번) -> restaurants(카드·지도용) -> done. 오류면 error.
 - GET  /api/restaurants/{id}    식당 상세(팝업용) JSON
