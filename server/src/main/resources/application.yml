@@ -1,3 +1,6 @@
+server:
+  port: ${SERVER_PORT:8081}   # 8080 은 다른 프로그램이 자주 쓰므로 피한다
+
 spring:
   application:
     name: restaurant-server

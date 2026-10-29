@@ -38,13 +38,22 @@ public class Message {
     @Column(name = "restaurant_ids", columnDefinition = "bigint[]")
     private Long[] restaurantIds;
 
+    /** 그 답변의 restaurants 이벤트 원문(JSON 문자열). 카드·지도를 그대로 복원하는 스냅샷이라 이후 평점이 바뀌어도 그때 본 값이다. */
+    @Column(name = "restaurants_json", columnDefinition = "text")
+    private String restaurantsJson;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
     public Message(Conversation conversation, Role role, String content, Long[] restaurantIds) {
+        this(conversation, role, content, restaurantIds, null);
+    }
+
+    public Message(Conversation conversation, Role role, String content, Long[] restaurantIds, String restaurantsJson) {
         this.conversation = conversation;
         this.role = role;
         this.content = content;
         this.restaurantIds = restaurantIds;
+        this.restaurantsJson = restaurantsJson;
     }
 }

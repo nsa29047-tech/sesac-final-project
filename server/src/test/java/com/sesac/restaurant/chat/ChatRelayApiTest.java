@@ -84,6 +84,16 @@ class ChatRelayApiTest {
                     }
                 }
             });
+            // 식당 상세: 7 번만 있고 나머지는 404
+            server.createContext("/api/restaurants/", exchange -> {
+                boolean found = exchange.getRequestURI().getPath().endsWith("/7");
+                byte[] body = (found ? "{\"restaurant_id\": 7, \"name\": \"테스트 식당\", \"menus\": []}" : "{\"detail\":\"not found\"}")
+                        .getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "application/json");
+                exchange.sendResponseHeaders(found ? 200 : 404, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+            });
             server.start();
             return server;
         } catch (IOException e) {
@@ -171,9 +181,28 @@ class ChatRelayApiTest {
                 // 카드로 소개한 식당만 저장한다(지도용 map_extra 는 제외)
                 .andExpect(jsonPath("$[1].restaurantIds.length()").value(2))
                 .andExpect(jsonPath("$[1].restaurantIds[0]").value(11))
-                .andExpect(jsonPath("$[1].restaurantIds[1]").value(22));
+                .andExpect(jsonPath("$[1].restaurantIds[1]").value(22))
+                // 대화를 다시 열 때 카드·지도를 그대로 복원할 수 있게 restaurants 이벤트 원문도 저장한다
+                .andExpect(jsonPath("$[1].restaurants.restaurants.length()").value(2))
+                .andExpect(jsonPath("$[1].restaurants.restaurants[0].name").value("A"))
+                .andExpect(jsonPath("$[1].restaurants.map_extra.length()").value(1))
+                .andExpect(jsonPath("$[0].restaurants").doesNotExist());
         mvc.perform(get("/api/conversations").header("Authorization", auth))
                 .andExpect(jsonPath("$[0].title").value("강남역 일식집 추천해줘"));
+    }
+
+    @Test
+    void restaurantDetailIsPassedThroughFromTheChatbot() throws Exception {
+        String auth = newUserAuth();
+
+        mvc.perform(get("/api/restaurants/7").header("Authorization", auth))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.restaurant_id").value(7))
+                .andExpect(jsonPath("$.name").value("테스트 식당"));
+        mvc.perform(get("/api/restaurants/8").header("Authorization", auth))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESTAURANT_NOT_FOUND"));
+        mvc.perform(get("/api/restaurants/7")).andExpect(status().isUnauthorized());
     }
 
     @Test

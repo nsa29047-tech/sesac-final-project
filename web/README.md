@@ -1,6 +1,6 @@
 # 맛집 노트 웹 (Next.js)
 
-챗봇 HTTP API(`src/api/chat_server.py`)를 쓰는 화면이다. 설계는 `docs/CHATBOT_API_DESIGN.md`.
+Spring Boot 서버(`server/`)를 쓰는 화면이다(로그인·대화 기록·챗봇 중계, 10/29부터). 챗봇 서버(`src/api/chat_server.py`)는 Spring 이 대신 호출한다. 설계는 `docs/CHATBOT_API_DESIGN.md`.
 Next.js 16(App Router, `cacheComponents`), React 19, Tailwind CSS 4, Leaflet(react-leaflet), react-markdown, lucide-react(아이콘), Pretendard(글꼴, npm 패키지로 자체 호스팅).
 
 > 이 Next.js 버전은 기존 지식과 다를 수 있다. 코드를 고치기 전에 `node_modules/next/dist/docs/` 의 해당 문서를 읽는다(`AGENTS.md`).
@@ -9,12 +9,13 @@ Next.js 16(App Router, `cacheComponents`), React 19, Tailwind CSS 4, Leaflet(rea
 
 ```bash
 uv run python src/api/chat_server.py      # 1) 챗봇 API  http://127.0.0.1:8000  (프로젝트 루트에서)
-npm --prefix web install                   # 2) 처음 한 번
-npm --prefix web run dev                   # 3) 화면       http://localhost:3000
+cd server && ./gradlew bootRun              # 2) Spring 서버 http://127.0.0.1:8081 (APP_DB_*·JWT_SECRET 환경변수 필요, docs/DEVELOPMENT.md 5-2)
+npm --prefix web install                   # 3) 처음 한 번
+npm --prefix web run dev                   # 4) 화면       http://localhost:3000
 ```
 
-- API 주소를 바꾸려면 `web/.env.local` 에 `NEXT_PUBLIC_API_URL=http://127.0.0.1:8000` 처럼 적고 개발 서버를 다시 시작한다(빌드 때 코드에 들어가는 값이다).
-- API 서버의 CORS 는 `http://localhost:3000` 만 허용한다. 다른 주소로 열면 서버의 `CHAT_ALLOWED_ORIGINS` 도 맞춘다.
+- API 주소(Spring)를 바꾸려면 `web/.env.local` 에 `NEXT_PUBLIC_API_URL=http://127.0.0.1:8081` 처럼 적고 개발 서버를 다시 시작한다(빌드 때 코드에 들어가는 값이다).
+- Spring 의 CORS 는 기본으로 `http://localhost:3000` 만 허용한다. 다른 주소로 열면 서버의 `CORS_ALLOWED_ORIGINS` 도 맞춘다.
 - 확인: `npm --prefix web run lint`, `npx --prefix web tsc --noEmit -p web`, `npm --prefix web run build`.
 
 ## 구조

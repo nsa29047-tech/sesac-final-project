@@ -66,6 +66,31 @@ public class ChatUpstream {
         throw unavailable();
     }
 
+    /** 식당 상세(GET /api/restaurants/{id})를 그대로 받아 JSON 문자열로 돌려준다. 없는 식당이면 404. */
+    public String restaurantDetail(long restaurantId) {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(props.baseUrl() + "/api/restaurants/" + restaurantId))
+                .header("Accept", "application/json")
+                .timeout(java.time.Duration.ofSeconds(15))
+                .GET()
+                .build();
+        HttpResponse<String> response;
+        try {
+            response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (IOException e) {
+            throw unavailable();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw unavailable();
+        }
+        if (response.statusCode() == 200) {
+            return response.body();
+        }
+        if (response.statusCode() == 404) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "RESTAURANT_NOT_FOUND", "식당 정보를 찾지 못했습니다");
+        }
+        throw unavailable();
+    }
+
     private static ApiException unavailable() {
         return new ApiException(HttpStatus.BAD_GATEWAY, "CHAT_UNAVAILABLE", "챗봇 서버에 연결할 수 없습니다");
     }

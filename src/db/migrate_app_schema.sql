@@ -34,11 +34,15 @@ CREATE TABLE IF NOT EXISTS app.messages (
     role             VARCHAR(10) NOT NULL CHECK (role IN ('user', 'assistant')),
     content          TEXT        NOT NULL,
     restaurant_ids   BIGINT[],                            -- assistant 답변에 카드로 나온 restaurant_id 배열(없으면 NULL)
+    restaurants_json TEXT,                                -- 그 답변의 restaurants 이벤트 원문(카드·지도 복원용 스냅샷, 없으면 NULL)
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- 대화 하나의 메시지를 시간순으로
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_created
     ON app.messages (conversation_id, created_at);
+
+-- 이미 만든 DB 에는 위 CREATE TABLE 이 건너뛰어지므로 나중에 더한 컬럼은 따로 추가한다
+ALTER TABLE app.messages ADD COLUMN IF NOT EXISTS restaurants_json TEXT;
 
 -- 4. 즐겨찾기 (users N:M restaurants 의 연결 테이블) -----------------------------
 CREATE TABLE IF NOT EXISTS app.favorites (

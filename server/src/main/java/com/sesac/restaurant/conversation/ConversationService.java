@@ -11,6 +11,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import tools.jackson.databind.json.JsonMapper;
+
 import java.util.List;
 import java.util.UUID;
 
@@ -23,11 +25,14 @@ public class ConversationService {
     private final ConversationRepository conversations;
     private final MessageRepository messages;
     private final UserRepository users;
+    private final JsonMapper mapper;
 
-    public ConversationService(ConversationRepository conversations, MessageRepository messages, UserRepository users) {
+    public ConversationService(ConversationRepository conversations, MessageRepository messages, UserRepository users,
+                               JsonMapper mapper) {
         this.conversations = conversations;
         this.messages = messages;
         this.users = users;
+        this.mapper = mapper;
     }
 
     @Transactional
@@ -85,7 +90,8 @@ public class ConversationService {
     @Transactional(readOnly = true)
     public List<MessageResponse> messages(Long userId, UUID id) {
         owned(userId, id);
-        return messages.findByConversationIdOrderByCreatedAtAscIdAsc(id).stream().map(MessageResponse::from).toList();
+        return messages.findByConversationIdOrderByCreatedAtAscIdAsc(id).stream()
+                .map(m -> MessageResponse.from(m, mapper)).toList();
     }
 
     /**
@@ -94,14 +100,21 @@ public class ConversationService {
      */
     @Transactional
     public MessageResponse append(Long userId, UUID id, Message.Role role, String content, List<Long> restaurantIds) {
+        return append(userId, id, role, content, restaurantIds, null);
+    }
+
+    /** restaurantsJson 은 그 답변의 restaurants 이벤트 원문이다(카드·지도 복원용). */
+    @Transactional
+    public MessageResponse append(Long userId, UUID id, Message.Role role, String content, List<Long> restaurantIds,
+                                  String restaurantsJson) {
         Conversation conversation = owned(userId, id);
         Long[] ids = (restaurantIds == null || restaurantIds.isEmpty()) ? null : restaurantIds.toArray(Long[]::new);
-        Message saved = messages.saveAndFlush(new Message(conversation, role, content, ids));
+        Message saved = messages.saveAndFlush(new Message(conversation, role, content, ids, restaurantsJson));
         if (role == Message.Role.user && Conversation.DEFAULT_TITLE.equals(conversation.getTitle())) {
             conversation.rename(autoTitle(content));
         }
         conversation.touch();
-        return MessageResponse.from(saved);
+        return MessageResponse.from(saved, mapper);
     }
 
     private Conversation owned(Long userId, UUID id) {

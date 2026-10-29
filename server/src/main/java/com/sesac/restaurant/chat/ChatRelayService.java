@@ -107,6 +107,7 @@ public class ChatRelayService {
     private static final class Turn {
         boolean terminal;                         // done 또는 error 를 이미 받았다
         List<Long> restaurantIds = List.of();     // restaurants 이벤트의 카드 식당 id
+        String restaurantsJson;                   // restaurants 이벤트 원문(대화를 다시 열 때 카드·지도를 복원하려고 저장한다)
     }
 
     /** 브라우저 쪽 전송이 실패했다는 표시(업스트림 읽기 오류와 구분한다). */
@@ -149,12 +150,15 @@ public class ChatRelayService {
             return;
         }
         switch (frame.event()) {
-            case "restaurants" -> turn.restaurantIds = cardIds(frame.data());
+            case "restaurants" -> {
+                turn.restaurantIds = cardIds(frame.data());
+                turn.restaurantsJson = frame.data();
+            }
             case "error" -> turn.terminal = true;
             case "done" -> {
                 turn.terminal = true;
                 // 클라이언트가 done 을 받았을 때 바로 대화를 조회해도 답변이 보이도록 저장을 먼저 한다
-                saveAnswer(userId, id, frame.data(), turn.restaurantIds);
+                saveAnswer(userId, id, frame.data(), turn.restaurantIds, turn.restaurantsJson);
             }
             default -> {
             }
@@ -162,11 +166,11 @@ public class ChatRelayService {
         send(emitter, frame.event(), frame.data());
     }
 
-    private void saveAnswer(Long userId, UUID id, String doneData, List<Long> restaurantIds) {
+    private void saveAnswer(Long userId, UUID id, String doneData, List<Long> restaurantIds, String restaurantsJson) {
         try {
             String answer = mapper.readTree(doneData).path("answer").asString("");
             if (!answer.isBlank()) {
-                conversations.append(userId, id, Message.Role.assistant, answer, restaurantIds);
+                conversations.append(userId, id, Message.Role.assistant, answer, restaurantIds, restaurantsJson);
             }
         } catch (RuntimeException e) {
             // 답변은 이미 화면에 흘려 보냈으니 저장 실패만 기록하고 done 은 그대로 전달한다

@@ -78,7 +78,7 @@ sesac-final-project/
 │       ├── rag_search.py               # 검색 모듈: SQL 필터 -> 벡터 후보 -> LLM 충족 판단(맞는 결과 없으면 빈 목록)
 │       └── test_rag.py                 # RAG 검색 테스트(12개 질문, 범위는 그때그때의 노트 있는 식당)
 ├── n8n/                                # n8n 자동화: docker-compose.yml, build_workflows.py(워크플로우 JSON 생성), workflows/(새 영상 처리·미슐랭 채우기·실패 알림)
-├── web/                                # Next.js 화면(10/14, 설계 docs/CHATBOT_API_DESIGN.md 단계 2): 채팅(SSE 스트리밍), 식당 카드, 번호 마커 지도(카드에 없는 나머지 후보는 작은 주황 점). 챗봇 API(src/api/chat_server.py)를 호출. 실행은 web/README.md, 5-2
+├── web/                                # Next.js 화면(10/14, 설계 docs/CHATBOT_API_DESIGN.md 단계 2): 채팅(SSE 스트리밍), 식당 카드, 번호 마커 지도(카드에 없는 나머지 후보는 작은 주황 점). Spring 서버(server/)를 호출(10/29부터 챗봇 API를 직접 부르지 않음, 로그인·대화 기록 화면 포함). 실행은 web/README.md, 5-2
 ├── parse_apis/                         # Parse SDK 스캐폴드. 생성 코드는 git 제외(`uv run parse add`로 재생성)
 ├── data/                               # 산출물 (git 제외)
 │   ├── urls/                           # 채널 영상 URL 목록 (원본 / 통과 / 제외)
@@ -297,11 +297,18 @@ uv run python src/chatbot/test_serialize.py       # 변환 계층 시험 5개
 
 ### 5-2. Next.js 화면 (`web/`, 로컬 데모)
 
+화면은 챗봇 서버가 아니라 Spring Boot 서버(`server/`)만 호출합니다(10/29): 브라우저 -> Spring(8081, 로그인·대화 저장·중계) -> FastAPI 챗봇(8000) -> DB. 실행 순서:
+
 ```bash
-uv run python src/api/chat_server.py     # 챗봇 API (127.0.0.1:8000)
-npm --prefix web install                  # 처음 한 번
-npm --prefix web run dev                  # http://localhost:3000
+# 1) app 스키마 적용(처음 한 번, 비밀번호 자리를 바꾼 뒤 관리자 계정으로): src/db/migrate_app_schema.sql
+uv run python src/api/chat_server.py                                  # 챗봇 API (127.0.0.1:8000)
+# APP_DB_URL·APP_DB_USER·APP_DB_PASSWORD·JWT_SECRET 환경변수를 설정한 터미널에서
+cd server && ./gradlew bootRun                                         # Spring 서버 (127.0.0.1:8081, CHAT_API_URL 기본 http://127.0.0.1:8000)
+npm --prefix web install                                               # 처음 한 번
+npm --prefix web run dev                                               # http://localhost:3000
 ```
+
+로그인(이메일·비밀번호) 화면이 먼저 나오고, 가입하면 바로 로그인됩니다. 토큰은 브라우저 localStorage에 두고(운영에서는 httpOnly 쿠키가 더 안전) 만료·위조로 401을 받으면 안내와 함께 로그인 화면으로 돌아갑니다. 왼쪽 위 기록 버튼으로 대화 기록 서랍을 열어 과거 대화를 이어서 묻거나 지울 수 있습니다. 대화를 다시 열면 답변의 카드·지도는 저장해 둔 `restaurants` 이벤트(`app.messages.restaurants_json`)로 복원하지만 "검색 조건" 칩은 저장하지 않아 없습니다. 챗봇의 대화 기억(`MemorySaver`)은 FastAPI 프로세스 메모리라서, 챗봇 서버를 재시작하면 기록은 보여도 이전 맥락은 기억하지 못합니다. 식당 상세 팝업도 Spring(`GET /api/restaurants/{id}`)이 챗봇 서버 응답을 전달합니다. `NEXT_PUBLIC_API_URL`(기본 `http://127.0.0.1:8081`)은 Spring 주소입니다.
 
 Next.js 16(App Router) + Tailwind CSS 4 + react-leaflet. 상단 바 + 채팅 + 오른쪽 결과 패널 구조입니다(좁은 화면에서는 결과가 답변 아래로 내려옵니다). 질문을 보내면 진행 단계 칩(조건 확인 → 식당 찾는 중 → 답변 작성)과 답변이 스트리밍되고, 답변은 식당 이름(주황)과 설명(회색)이 구분되어 나오며 이름을 누르면 상세가 열립니다. 답변이 끝나면 검색 조건 칩과 함께 번호 마커 지도와 식당 카드가 나옵니다(카드 번호 = 마커 번호 = 답변의 번호). 서버가 꺼져 있거나 연결이 끊기면 안내 문구를 보여 주고 다시 보낼 수 있습니다. 자세한 구조와 알려진 점은 `web/README.md`. 카드의 "상세 정보 보기" 또는 지도 마커 말풍선의 같은 버튼을 누르면 상세 팝업이 열립니다: 유튜브 플레이어와 메뉴 타임라인(메뉴를 누르면 그 시각으로 이동·재생, 재생 중 현재 메뉴 강조), 영상 속 소개·총평, 음료, 주소·가격·영업시간, 위치 지도. ESC·바깥 클릭·✕로 닫습니다.
 
