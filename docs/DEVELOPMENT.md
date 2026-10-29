@@ -79,6 +79,7 @@ sesac-final-project/
 │       └── test_rag.py                 # RAG 검색 테스트(12개 질문, 범위는 그때그때의 노트 있는 식당)
 ├── n8n/                                # n8n 자동화: docker-compose.yml, build_workflows.py(워크플로우 JSON 생성), workflows/(새 영상 처리·미슐랭 채우기·실패 알림)
 ├── compose.yaml                        # Docker 스택(10/29): db(pgvector Postgres)·chatbot(FastAPI)·server(Spring)·web(Next.js). 5-3
+├── .github/workflows/ci.yml            # GitHub Actions CI(10/29): server 테스트·web 빌드·chatbot 단위 시험·docker 이미지 빌드. 5-4
 ├── docker/                             # chatbot.Dockerfile·chatbot.deps.txt, db/init/10-init.sh(db 첫 기동 초기화), stack.env.example(stack.env 는 git 제외)
 ├── web/                                # Next.js 화면(10/14, 설계 docs/CHATBOT_API_DESIGN.md 단계 2): 채팅(SSE 스트리밍), 식당 카드, 번호 마커 지도(카드에 없는 나머지 후보는 작은 주황 점). Spring 서버(server/)를 호출(10/29부터 챗봇 API를 직접 부르지 않음, 로그인·대화 기록 화면 포함). 실행은 web/README.md, 5-2
 ├── parse_apis/                         # Parse SDK 스캐폴드. 생성 코드는 git 제외(`uv run parse add`로 재생성)
@@ -335,6 +336,21 @@ docker compose --env-file docker/stack.env down             # 내리기(데이�
 - **헬스체크**: Spring은 `/actuator/health`(DB 연결까지 확인, 상세는 숨김, 나머지 actuator는 닫힘), 챗봇은 `/api/health`의 `ok`, db는 TCP `pg_isready`. `depends_on: service_healthy`로 db -> chatbot -> server -> web 순서로 올라온다.
 - **web의 API 주소**: `NEXT_PUBLIC_API_URL`은 빌드할 때 코드에 박힌다. 호스트 밖에서 접속하려면 `docker/stack.env`의 `PUBLIC_API_URL`(기본 `http://localhost:8081`)과 `CORS_ALLOWED_ORIGINS`를 바꾸고 `--build`로 다시 빌드한다.
 - **알아 둘 점**: 스택의 DB는 Supabase의 복사본이라 이후 Supabase 데이터가 바뀌어도 자동으로 따라가지 않는다(스냅샷을 다시 만든다). 챗봇의 대화 기억은 컨테이너 메모리라 챗봇 컨테이너를 재시작하면 사라진다.
+
+### 5-4. CI (GitHub Actions, `.github/workflows/ci.yml`)
+
+`main`으로 가는 PR과 `main` push마다 자동으로 돈다(10/29). 외부 API(OpenAI·Places·Tavily)와 Supabase는 쓰지 않아 비용이 들지 않고 비밀 값(Secrets)도 필요 없다.
+
+| 잡 | 하는 일 |
+|---|---|
+| `server` | `pgvector/pgvector:pg17` 서비스 컨테이너에 `restaurant_schema.sql` -> `migrate_app_schema.sql`(비밀번호 자리는 CI 일회용 값으로 치환)을 적용하고 `./gradlew test` (DB 테스트 포함, `public.restaurants`가 비어 있어 식당 행이 필요한 4개는 건너뜀). 실패하면 테스트 리포트를 올린다 |
+| `web` | `npm ci` -> `tsc --noEmit` -> `eslint` -> `next build` |
+| `chatbot` | 이미지와 같은 방식(`uv.lock` 고정 + `chatbot.deps.txt`)으로 설치하고 `test_serialize.py --no-db` (DB 없는 단위 시험) |
+| `docker` | 위 세 잡이 통과하면 챗봇·서버·웹 이미지 3개가 빌드되는지 확인(push 안 함, GHA 캐시) |
+
+- 로컬에서 같은 명령을 확인했다: web `tsc`·`eslint` 통과, chatbot 최소 설치 환경에서 4/4, server는 일회용 pgvector 컨테이너에 같은 SQL을 적용해 41개 중 37개 통과·4개 건너뜀·실패 0.
+- 챗봇 평가셋(`eval/run_eval.py`)과 `smoke_chat_api.py`는 OpenAI·Places를 호출하고 DB 데이터가 필요해서 CI에 넣지 않았다.
+- 머지 전에 CI 통과를 강제하려면 GitHub의 Settings -> Branches에서 `main`에 required status checks(위 4개 잡)를 건다.
 
 ## 진행 상황
 
