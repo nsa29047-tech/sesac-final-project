@@ -89,6 +89,8 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - run: npm ci
+      # LayoutProps 같은 전역 타입은 next dev/build/typegen 이 만든다(git 제외). tsc 전에 먼저 생성한다
+      - run: npx next typegen
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm run build
