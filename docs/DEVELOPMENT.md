@@ -70,6 +70,7 @@ sesac-final-project/
 │       ├── migrate_video_queue.sql     # 마이그레이션(10/14): video_queue(새 영상 자동 처리의 진행 상태). process_video.py init-db 로도 적용
 │       ├── load_prices.py              # enrich_places_details.py --prices 결과 -> restaurants 가격 컬럼
 │       ├── create_scope_views.sql      # 조회 범위 뷰: restaurants_in_scope 등 (자막 분석 노트가 있는 식당만). 챗봇은 현재 쓰지 않음
+│       ├── migrate_app_schema.sql      # Spring Boot 서버용 app 스키마(users·conversations·messages·favorites)와 app_user 계정
 │       ├── create_chatbot_role.sql     # 챗봇 전용 DB 계정 스크립트. 현재 쓰지 않음(챗봇은 READONLY_POSTGRES_URI 사용)
 │       ├── category_rules.py           # 분류 규칙: 세부 분류는 한 식당에 하나만(나머지는 태그), 수동 분류 MANUAL_CATEGORY
 │       ├── pick_detail.py              # 세부 분류를 식당당 대표 하나로 정함(LLM) + 나머지는 태그, 미슐랭 태그 삭제. --limit 샘플, --apply 반영
@@ -166,6 +167,9 @@ uv run parse add --marketplace guide-michelin-com-api
 | `TAVILY_API_KEY` | 미슐랭 폴백 검색(`--michelin-fallback`)과 이력 근거 검색 |
 | `GEMINI_API_KEY` | Gemini API. 자동 생성 자막 영상을 직접 분석할 때 사용(`extract_video_split.py`). 무료 등급은 YouTube 영상을 하루 8시간까지만 받는다 |
 | `POSTGRES_URI` | PostgreSQL 접속 문자열 |
+| `APP_DB_URL`·`APP_DB_USER`·`APP_DB_PASSWORD` | Spring Boot 서버(`server/`)의 DB 접속 정보. `migrate_app_schema.sql`이 만드는 `app_user` 계정을 쓰고 JDBC URL 형식(`jdbc:postgresql://호스트:5432/DB`)이다 |
+| `JWT_SECRET` | Spring Boot 서버의 JWT(HS256) 서명 키. 32바이트 이상 무작위 문자열이고 기본값이 없어 없으면 서버가 기동하지 않는다 |
+| `CORS_ALLOWED_ORIGINS` | Spring Boot 서버가 허용할 프런트 주소(쉼표 구분, 기본 `http://localhost:3000`) |
 | `READONLY_POSTGRES_URI` | 읽기 전용 계정(`create_readonly_role.sql`) 접속 문자열. 챗봇(`src/chatbot`)과 `rag_search.py`가 원본 테이블 조회에 쓴다. **없으면 챗봇이 실행되지 않는다**(관리자 계정 `POSTGRES_URI`로 대신 접속하지 않음). 적재·정리 스크립트는 `POSTGRES_URI`를 쓴다 |
 | `PIPELINE_API_TOKEN` | `src/api/pipeline_server.py`(n8n이 호출하는 파이프라인 HTTP API)의 `X-API-Key` 값. 긴 무작위 문자열. 없으면 서버가 시작되지 않는다. n8n 컨테이너에는 `docker-compose.yml`이 이 값만 넘긴다 |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT` | LangSmith 트레이싱 |
