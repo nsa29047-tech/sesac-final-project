@@ -349,6 +349,7 @@ docker compose --env-file docker/stack.env down             # 내리기(데이�
 | `docker` | 위 세 잡이 통과하면 챗봇·서버·웹 이미지 3개가 빌드되는지 확인(push 안 함, GHA 캐시) |
 
 - 로컬에서 같은 명령을 확인했다: web `tsc`·`eslint` 통과, chatbot 최소 설치 환경에서 4/4, server는 일회용 pgvector 컨테이너에 같은 SQL을 적용해 41개 중 37개 통과·4개 건너뜀·실패 0.
+- GitHub에서 첫 실행은 `server`·`web`이 실패했다. Windows에서 커밋한 `server/gradlew`에 실행 권한이 없어서(`exit 126`, `git update-index --chmod=+x`로 수정), 새로 체크아웃하면 Next의 전역 타입(`LayoutProps`)이 없어서(`tsc` 전에 `npx next typegen` 추가)였다. 수정 후 4개 잡 모두 통과.
 - 챗봇 평가셋(`eval/run_eval.py`)과 `smoke_chat_api.py`는 OpenAI·Places를 호출하고 DB 데이터가 필요해서 CI에 넣지 않았다.
 - 머지 전에 CI 통과를 강제하려면 GitHub의 Settings -> Branches에서 `main`에 required status checks(위 4개 잡)를 건다.
 
