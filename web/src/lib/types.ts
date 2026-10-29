@@ -41,6 +41,30 @@ export interface Restaurant {
   matched: Match[];
 }
 
+// Spring 서버(server/)의 계정·대화 API 응답
+export interface User {
+  id: number;
+  email: string;
+  nickname: string;
+}
+
+export interface ConversationSummary {
+  id: string; // 챗봇의 thread_id 와 같은 UUID
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** GET /api/conversations/{id}/messages. 답변에 카드가 있었으면 restaurants 에 그때의 restaurants 이벤트 원문이 들어 있다. */
+export interface SavedMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  restaurantIds: number[];
+  restaurants: { restaurants: Restaurant[]; map_extra?: Restaurant[] } | null;
+  createdAt: string;
+}
+
 // POST /api/chat 의 SSE 이벤트
 export type ChatEvent =
   | { event: "thread"; data: { thread_id: string } }

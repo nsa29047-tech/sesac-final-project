@@ -1,20 +1,39 @@
 "use client";
 
-import { ArrowUp, MapPinned, Plus, Square, UtensilsCrossed } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { ApiError, streamChat } from "@/lib/api";
+import { ArrowUp, History, LogOut, MapPinned, Plus, Square, UtensilsCrossed } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiError, deleteConversation, fetchMessages, listConversations, streamChat } from "@/lib/api";
 import { argChips } from "@/lib/format";
-import type { ChatEvent, ChatMessage, Restaurant } from "@/lib/types";
+import type { ChatEvent, ChatMessage, ConversationSummary, Restaurant, SavedMessage, User } from "@/lib/types";
 import AnswerMarkdown from "./AnswerMarkdown";
+import ConversationDrawer from "./ConversationDrawer";
 import DetailDialog from "./DetailDialog";
 import ResultsList from "./ResultsList";
 import StepChips from "./StepChips";
 import Welcome from "./Welcome";
 
-export default function Chat() {
+/** 저장된 메시지를 화면용 메시지로 바꾼다. 카드·지도는 그때 저장한 restaurants 이벤트로 복원하고, 도구 호출 칩(calls)은 저장하지 않아 비어 있다. */
+function toChatMessage(m: SavedMessage): ChatMessage {
+  return {
+    id: `s${m.id}`,
+    role: m.role,
+    text: m.content,
+    cards: m.restaurants?.restaurants ?? [],
+    mapExtra: m.restaurants?.map_extra ?? [],
+    calls: [],
+    streaming: false,
+  };
+}
+
+export default function Chat({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [currentId, setCurrentId] = useState<string | null>(null); // 지금 열려 있는 대화
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [loadingConv, setLoadingConv] = useState(false);
+  const [notice, setNotice] = useState(""); // 대화 목록·불러오기 오류 안내
   const [detail, setDetail] = useState<Restaurant | null>(null); // 상세 팝업으로 보고 있는 식당
   const [activeId, setActiveId] = useState<string | null>(null); // 넓은 화면의 결과 패널에 보여 줄 답변
   // 렌더링 중에 난수를 만들면 안 되므로(cacheComponents) 대화 ID 는 첫 질문을 보낼 때 만든다.
@@ -27,12 +46,24 @@ export default function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
 
+  const refreshList = useCallback(async () => {
+    try {
+      setConversations(await listConversations());
+    } catch {} // 목록을 못 불러와도 채팅은 계속 쓸 수 있다
+  }, []);
+
+  useEffect(() => {
+    refreshList();
+  }, [refreshList]);
+
   const nextId = () => `m${++counterRef.current}`;
 
   async function send(raw: string) {
     const question = raw.trim();
     if (!question || busy) return;
     threadRef.current ??= crypto.randomUUID();
+    setCurrentId(threadRef.current);
+    setNotice("");
     const botId = nextId();
     setMessages((ms) => [
       ...ms,
@@ -74,6 +105,7 @@ export default function Chat() {
       patch((m) => ({ ...m, streaming: false }));
       setBusy(false);
       abortRef.current = null;
+      refreshList(); // 새 대화가 목록에 생기고 제목이 정해졌다
     }
   }
 
@@ -82,9 +114,50 @@ export default function Chat() {
     setDetail(null);
     setActiveId(null);
     threadRef.current = null;
+    setCurrentId(null);
     setMessages([]);
     setInput("");
     setBusy(false);
+    setNotice("");
+    setDrawerOpen(false);
+  }
+
+  /** 저장된 대화를 열어 이어서 질문할 수 있게 한다(대화 id 가 챗봇의 thread_id 라 챗봇도 앞 내용을 기억한다). */
+  async function openConversation(id: string) {
+    if (id === currentId && messages.length > 0) {
+      setDrawerOpen(false);
+      return;
+    }
+    abortRef.current?.abort();
+    setDrawerOpen(false);
+    setDetail(null);
+    setBusy(false);
+    setNotice("");
+    setLoadingConv(true);
+    try {
+      const saved = (await fetchMessages(id)).map(toChatMessage);
+      threadRef.current = id;
+      setCurrentId(id);
+      setMessages(saved);
+      const lastWithCards = [...saved].reverse().find((m) => m.cards.length > 0);
+      setActiveId(lastWithCards?.id ?? null);
+    } catch (err) {
+      setNotice(err instanceof ApiError ? err.message : "대화를 불러오지 못했어요.");
+    } finally {
+      setLoadingConv(false);
+    }
+  }
+
+  async function removeConversation(id: string) {
+    const title = conversations.find((c) => c.id === id)?.title ?? "이 대화";
+    if (!window.confirm(`"${title}" 대화를 지울까요? 되돌릴 수 없어요.`)) return;
+    try {
+      await deleteConversation(id);
+      if (id === currentId) newChat();
+      await refreshList();
+    } catch (err) {
+      setNotice(err instanceof ApiError ? err.message : "대화를 지우지 못했어요.");
+    }
   }
 
   const withCards = messages.filter((m) => m.cards.length > 0);
@@ -95,26 +168,52 @@ export default function Chat() {
     <div className="flex h-dvh flex-col">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-4 sm:px-6">
         <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            aria-label="대화 기록 열기"
+            className="flex h-8 w-8 items-center justify-center rounded-[10px] text-neutral-600 hover:bg-neutral-100"
+          >
+            <History size={18} aria-hidden />
+          </button>
           <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-brand text-white">
             <UtensilsCrossed size={17} aria-hidden />
           </span>
           <span className="text-[17px] font-extrabold tracking-tight text-neutral-900">맛집 노트</span>
-          <span className="ml-1 hidden text-[13px] text-neutral-400 sm:inline">미식 유튜브 속 식당 추천</span>
+          <span className="ml-1 hidden text-[13px] text-neutral-400 md:inline">미식 유튜브 속 식당 추천</span>
         </div>
-        <button
-          type="button"
-          onClick={newChat}
-          className="flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3.5 py-1.5 text-[13px] font-semibold text-neutral-700 hover:border-brand hover:text-brand-ink"
-        >
-          <Plus size={15} aria-hidden />새 대화
-        </button>
+        <div className="flex items-center gap-2">
+          <span className="hidden max-w-[10rem] truncate text-[13px] font-semibold text-neutral-600 sm:inline">{user.nickname}</span>
+          <button
+            type="button"
+            onClick={newChat}
+            className="flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3.5 py-1.5 text-[13px] font-semibold text-neutral-700 hover:border-brand hover:text-brand-ink"
+          >
+            <Plus size={15} aria-hidden />새 대화
+          </button>
+          <button
+            type="button"
+            onClick={onLogout}
+            aria-label="로그아웃"
+            title="로그아웃"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+          >
+            <LogOut size={16} aria-hidden />
+          </button>
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1">
         <section className="flex min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6 sm:px-6">
-              {messages.length === 0 && <Welcome onPick={send} />}
+              {notice && (
+                <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {notice}
+                </p>
+              )}
+              {loadingConv && <p className="py-10 text-center text-sm text-neutral-400">대화를 불러오는 중…</p>}
+              {messages.length === 0 && !loadingConv && <Welcome onPick={send} />}
 
               {messages.map((m) =>
                 m.role === "user" ? (
@@ -239,6 +338,16 @@ export default function Chat() {
           </aside>
         )}
       </div>
+
+      <ConversationDrawer
+        open={drawerOpen}
+        items={conversations}
+        currentId={currentId}
+        onClose={() => setDrawerOpen(false)}
+        onSelect={openConversation}
+        onNew={newChat}
+        onDelete={removeConversation}
+      />
 
       <DetailDialog restaurantId={detail?.restaurant_id ?? null} name={detail?.name ?? ""} onClose={() => setDetail(null)} />
     </div>
