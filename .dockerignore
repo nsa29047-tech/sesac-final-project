@@ -1,0 +1,11 @@
+# 챗봇 이미지(docker/chatbot.Dockerfile)의 빌드 컨텍스트는 저장소 루트다.
+# 허용 목록 방식: 아래에 적은 것만 이미지 빌드에 보내므로 .env·data/·키 파일이 실수로 이미지에 들어가지 않는다.
+*
+!pyproject.toml
+!uv.lock
+!src
+!docker/chatbot.deps.txt
+
+# src 안의 불필요한 것
+**/__pycache__
+**/*.pyc

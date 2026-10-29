@@ -1,6 +1,12 @@
 server:
   port: ${SERVER_PORT:8081}   # 8080 은 다른 프로그램이 자주 쓰므로 피한다
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health   # 컨테이너·로드밸런서의 상태 확인용만 연다. 상세(DB 종류 등)는 보여 주지 않는다(기본값)
+
 spring:
   application:
     name: restaurant-server

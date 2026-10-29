@@ -78,6 +78,8 @@ sesac-final-project/
 │       ├── rag_search.py               # 검색 모듈: SQL 필터 -> 벡터 후보 -> LLM 충족 판단(맞는 결과 없으면 빈 목록)
 │       └── test_rag.py                 # RAG 검색 테스트(12개 질문, 범위는 그때그때의 노트 있는 식당)
 ├── n8n/                                # n8n 자동화: docker-compose.yml, build_workflows.py(워크플로우 JSON 생성), workflows/(새 영상 처리·미슐랭 채우기·실패 알림)
+├── compose.yaml                        # Docker 스택(10/29): db(pgvector Postgres)·chatbot(FastAPI)·server(Spring)·web(Next.js). 5-3
+├── docker/                             # chatbot.Dockerfile·chatbot.deps.txt, db/init/10-init.sh(db 첫 기동 초기화), stack.env.example(stack.env 는 git 제외)
 ├── web/                                # Next.js 화면(10/14, 설계 docs/CHATBOT_API_DESIGN.md 단계 2): 채팅(SSE 스트리밍), 식당 카드, 번호 마커 지도(카드에 없는 나머지 후보는 작은 주황 점). Spring 서버(server/)를 호출(10/29부터 챗봇 API를 직접 부르지 않음, 로그인·대화 기록 화면 포함). 실행은 web/README.md, 5-2
 ├── parse_apis/                         # Parse SDK 스캐폴드. 생성 코드는 git 제외(`uv run parse add`로 재생성)
 ├── data/                               # 산출물 (git 제외)
@@ -168,6 +170,7 @@ uv run parse add --marketplace guide-michelin-com-api
 | `GEMINI_API_KEY` | Gemini API. 자동 생성 자막 영상을 직접 분석할 때 사용(`extract_video_split.py`). 무료 등급은 YouTube 영상을 하루 8시간까지만 받는다 |
 | `POSTGRES_URI` | PostgreSQL 접속 문자열 |
 | `APP_DB_URL`·`APP_DB_USER`·`APP_DB_PASSWORD` | Spring Boot 서버(`server/`)의 DB 접속 정보. `migrate_app_schema.sql`이 만드는 `app_user` 계정을 쓰고 JDBC URL 형식(`jdbc:postgresql://호스트:5432/DB`)이다 |
+| `POSTGRES_PASSWORD`·`READONLY_DB_PASSWORD`·`APP_DB_PASSWORD`·`PUBLIC_API_URL` 등 | Docker 스택 전용 값. `docker/stack.env`(git 제외)에 두고 목록은 `docker/stack.env.example`. DB 비밀번호 3개는 이 스택 안에서만 쓰는 새 값이고 영문·숫자·_- 12자 이상 |
 | `CHAT_API_URL` | Spring Boot 서버가 질문을 중계할 FastAPI 챗봇 서버 주소(기본 `http://127.0.0.1:8000`) |
 | `JWT_SECRET` | Spring Boot 서버의 JWT(HS256) 서명 키. 32바이트 이상 무작위 문자열이고 기본값이 없어 없으면 서버가 기동하지 않는다 |
 | `CORS_ALLOWED_ORIGINS` | Spring Boot 서버가 허용할 프런트 주소(쉼표 구분, 기본 `http://localhost:3000`) |
@@ -312,6 +315,26 @@ npm --prefix web run dev                                               # http://
 
 Next.js 16(App Router) + Tailwind CSS 4 + react-leaflet. 상단 바 + 채팅 + 오른쪽 결과 패널 구조입니다(좁은 화면에서는 결과가 답변 아래로 내려옵니다). 질문을 보내면 진행 단계 칩(조건 확인 → 식당 찾는 중 → 답변 작성)과 답변이 스트리밍되고, 답변은 식당 이름(주황)과 설명(회색)이 구분되어 나오며 이름을 누르면 상세가 열립니다. 답변이 끝나면 검색 조건 칩과 함께 번호 마커 지도와 식당 카드가 나옵니다(카드 번호 = 마커 번호 = 답변의 번호). 서버가 꺼져 있거나 연결이 끊기면 안내 문구를 보여 주고 다시 보낼 수 있습니다. 자세한 구조와 알려진 점은 `web/README.md`. 카드의 "상세 정보 보기" 또는 지도 마커 말풍선의 같은 버튼을 누르면 상세 팝업이 열립니다: 유튜브 플레이어와 메뉴 타임라인(메뉴를 누르면 그 시각으로 이동·재생, 재생 중 현재 메뉴 강조), 영상 속 소개·총평, 음료, 주소·가격·영업시간, 위치 지도. ESC·바깥 클릭·✕로 닫습니다.
 
+
+### 5-3. Docker 스택 (`compose.yaml`)
+
+브라우저 -> `web`(3000) -> `server`(Spring, 8081) -> `chatbot`(FastAPI) -> `db`(PostgreSQL 17 + pgvector). 한 번에 같은 환경으로 띄우려는 용도입니다(10/29).
+
+```bash
+cp docker/stack.env.example docker/stack.env                # 비밀번호·JWT 키·OpenAI/Places 키를 채운다(git 제외, 커밋 금지)
+uv run python src/db/export_snapshot.py                     # 처음 한 번: Supabase 데이터를 data/db_snapshot/public.sql 로 내보낸다(Docker 필요, 읽기만 함)
+docker compose --env-file docker/stack.env up -d --build    # http://localhost:3000
+docker compose --env-file docker/stack.env down             # 내리기(데이터 유지). 데이터까지 지우려면 down -v
+```
+
+- **DB 초기화**: `db`는 데이터 볼륨이 비어 있을 때 한 번만 `docker/db/init/10-init.sh`를 실행한다: pgvector 확장 -> 스냅샷 복원 -> 읽기 전용 계정 `readonly_user`(`create_readonly_role.sql`) -> `app` 스키마와 `app_user`(`migrate_app_schema.sql`). 스냅샷을 새로 만들었으면 `down -v` 후 다시 올린다. 스냅샷이 없으면 `restaurants` 스키마만 만들고 경고를 낸다(챗봇 검색은 동작하지 않음).
+- **스냅샷**: `export_snapshot.py`가 `postgres:17` 이미지의 `pg_dump`로 Supabase `public` 스키마(식당·메뉴·청크·벡터, 약 25MB)를 내보낸다. Supabase 풀러의 트랜잭션 모드(6543)는 pg_dump에 맞지 않아 세션 모드(5432)로 바꿔 접속하고, 접속 문자열은 명령줄이 아니라 환경변수로만 넘긴다. 계정·권한은 담지 않고 로컬에서 새로 만든다.
+- **권한 분리**: 챗봇 컨테이너에는 읽기 전용 접속 문자열만 있다(쓰기 가능한 Supabase 관리자 문자열은 없다). Spring 계정은 `app` 스키마만 읽고 쓰며 `restaurants`는 조회만 한다.
+- **챗봇은 포트를 열지 않는다**: 인증이 없는 서버라서 같은 compose 네트워크의 Spring(`CHAT_API_URL=http://chatbot:8000`)만 접근한다. `db`(5434)·`server`(8081)·`web`(3000)은 `127.0.0.1`에만 열어 내 PC에서만 접속된다.
+- **이미지**: `server/Dockerfile`(Gradle 빌드 -> `jarmode=tools` 레이어 추출 -> `eclipse-temurin:17-jre-alpine`, 비루트), `docker/chatbot.Dockerfile`(`uv.lock` 고정 버전으로 `chatbot.deps.txt`의 패키지만 설치, 파이프라인용 playwright·streamlit 등과 생성물 `parse_apis`는 제외), `web/Dockerfile`(`output: "standalone"`은 `NEXT_OUTPUT=standalone`일 때만 켜져 평소의 `next start`에는 영향이 없다). 각각 약 370~390MB. 루트 `.dockerignore`는 허용 목록이라 `.env`·`data/`가 이미지 빌드에 들어가지 않는다.
+- **헬스체크**: Spring은 `/actuator/health`(DB 연결까지 확인, 상세는 숨김, 나머지 actuator는 닫힘), 챗봇은 `/api/health`의 `ok`, db는 TCP `pg_isready`. `depends_on: service_healthy`로 db -> chatbot -> server -> web 순서로 올라온다.
+- **web의 API 주소**: `NEXT_PUBLIC_API_URL`은 빌드할 때 코드에 박힌다. 호스트 밖에서 접속하려면 `docker/stack.env`의 `PUBLIC_API_URL`(기본 `http://localhost:8081`)과 `CORS_ALLOWED_ORIGINS`를 바꾸고 `--build`로 다시 빌드한다.
+- **알아 둘 점**: 스택의 DB는 Supabase의 복사본이라 이후 Supabase 데이터가 바뀌어도 자동으로 따라가지 않는다(스냅샷을 다시 만든다). 챗봇의 대화 기억은 컨테이너 메모리라 챗봇 컨테이너를 재시작하면 사라진다.
 
 ## 진행 상황
 

@@ -1,0 +1,15 @@
+# 챗봇 서버(src/api/chat_server.py)가 import 하는 외부 패키지(이름만).
+# 버전은 uv.lock 에서 뽑은 constraints 로 고정한다(docker/chatbot.Dockerfile).
+# pyproject.toml 전체를 설치하지 않는 이유: playwright·streamlit·pandas·yt-dlp 같은 파이프라인용 패키지가 이미지를 크게 만들고,
+# parse-apis(생성물, git 제외)는 경로 의존성이라 빌드 컨텍스트에 없다.
+# chat_server 의 import 범위가 바뀌면 여기도 맞춘다.
+fastapi
+uvicorn[standard]
+langgraph
+langchain-core
+langchain-openai
+openai
+psycopg2-binary
+pydantic
+requests
+python-dotenv
