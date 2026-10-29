@@ -46,6 +46,23 @@ public class ConversationService {
         }
     }
 
+    /** 이미 있는 id 가 남의 대화이면 409. 없거나 내 대화이면 통과한다(없으면 첫 질문 때 만든다). */
+    @Transactional(readOnly = true)
+    public void assertUsable(Long userId, UUID id) {
+        if (conversations.findByIdAndUserId(id, userId).isEmpty() && conversations.existsById(id)) {
+            throw new ApiException(HttpStatus.CONFLICT, "DUPLICATE_CONVERSATION", "이미 사용 중인 대화 ID입니다");
+        }
+    }
+
+    /** 질문 한 턴의 시작: 대화가 없으면 만들고 사용자 메시지를 저장한다(한 트랜잭션). */
+    @Transactional
+    public void startTurn(Long userId, UUID id, String content) {
+        if (conversations.findByIdAndUserId(id, userId).isEmpty()) {
+            create(userId, id, null);
+        }
+        append(userId, id, Message.Role.user, content, null);
+    }
+
     @Transactional(readOnly = true)
     public List<ConversationResponse> list(Long userId) {
         return conversations.findByUserIdOrderByUpdatedAtDesc(userId).stream().map(ConversationResponse::from).toList();

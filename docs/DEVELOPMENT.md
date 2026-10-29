@@ -168,6 +168,7 @@ uv run parse add --marketplace guide-michelin-com-api
 | `GEMINI_API_KEY` | Gemini API. 자동 생성 자막 영상을 직접 분석할 때 사용(`extract_video_split.py`). 무료 등급은 YouTube 영상을 하루 8시간까지만 받는다 |
 | `POSTGRES_URI` | PostgreSQL 접속 문자열 |
 | `APP_DB_URL`·`APP_DB_USER`·`APP_DB_PASSWORD` | Spring Boot 서버(`server/`)의 DB 접속 정보. `migrate_app_schema.sql`이 만드는 `app_user` 계정을 쓰고 JDBC URL 형식(`jdbc:postgresql://호스트:5432/DB`)이다 |
+| `CHAT_API_URL` | Spring Boot 서버가 질문을 중계할 FastAPI 챗봇 서버 주소(기본 `http://127.0.0.1:8000`) |
 | `JWT_SECRET` | Spring Boot 서버의 JWT(HS256) 서명 키. 32바이트 이상 무작위 문자열이고 기본값이 없어 없으면 서버가 기동하지 않는다 |
 | `CORS_ALLOWED_ORIGINS` | Spring Boot 서버가 허용할 프런트 주소(쉼표 구분, 기본 `http://localhost:3000`) |
 | `READONLY_POSTGRES_URI` | 읽기 전용 계정(`create_readonly_role.sql`) 접속 문자열. 챗봇(`src/chatbot`)과 `rag_search.py`가 원본 테이블 조회에 쓴다. **없으면 챗봇이 실행되지 않는다**(관리자 계정 `POSTGRES_URI`로 대신 접속하지 않음). 적재·정리 스크립트는 `POSTGRES_URI`를 쓴다 |
