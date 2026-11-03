@@ -93,6 +93,8 @@ sesac-final-project/
 │   └── backup_YYYYMMDD_HHMMSS/         # backup_tables.py 백업
 ├── notebooks/
 │   └── crawling.ipynb                  # 채널 영상 URL 추출 등 실험 노트북
+├── docs/images/                        # README용 화면 캡처 4장(01-login, 02-home, 03-chat-map, 04-detail)
+├── docs/DOCKER_USAGE.md                # Docker 명령 사용법(처음 쓰는 사람용)
 ├── docs/archive/WORKLOG.md             # 작업 일지(보관용, 일부는 추정 기록)
 ├── CLAUDE.md                           # Claude Code용 작업 규칙·진행 상황
 ├── langgraph.json                      # LangGraph 설정 (graph: ./src/app.py:graph)
@@ -327,6 +329,8 @@ uv run python src/db/export_snapshot.py                     # 처음 한 번: Su
 docker compose --env-file docker/stack.env up -d --build    # http://localhost:3000
 docker compose --env-file docker/stack.env down             # 내리기(데이터 유지). 데이터까지 지우려면 down -v
 ```
+
+명령 설명, 상황별 명령(키 변경은 `up -d --force-recreate <서비스>`, 코드 변경은 `--build`), 문제 해결은 [DOCKER_USAGE.md](DOCKER_USAGE.md). `stack.env`의 `OPENAI_API_KEY`는 `.env`와 별개 파일이라 `.env`의 키를 바꾸면 따로 옮겨야 한다(10/29 키 만료 후 `stack.env`에 옛 키가 남아 챗봇이 401을 낸 적이 있다).
 
 - **DB 초기화**: `db`는 데이터 볼륨이 비어 있을 때 한 번만 `docker/db/init/10-init.sh`를 실행한다: pgvector 확장 -> 스냅샷 복원 -> 읽기 전용 계정 `readonly_user`(`create_readonly_role.sql`) -> `app` 스키마와 `app_user`(`migrate_app_schema.sql`). 스냅샷을 새로 만들었으면 `down -v` 후 다시 올린다. 스냅샷이 없으면 `restaurants` 스키마만 만들고 경고를 낸다(챗봇 검색은 동작하지 않음).
 - **스냅샷**: `export_snapshot.py`가 `postgres:17` 이미지의 `pg_dump`로 Supabase `public` 스키마(식당·메뉴·청크·벡터, 약 25MB)를 내보낸다. Supabase 풀러의 트랜잭션 모드(6543)는 pg_dump에 맞지 않아 세션 모드(5432)로 바꿔 접속하고, 접속 문자열은 명령줄이 아니라 환경변수로만 넘긴다. 계정·권한은 담지 않고 로컬에서 새로 만든다.
