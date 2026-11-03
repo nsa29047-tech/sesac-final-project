@@ -71,8 +71,7 @@ function Detail({ d }: { d: RestaurantDetail }) {
 
       <Section icon="🎬" title="영상에 나온 메뉴 타임라인">
         {foodNotes.length > 0 ? (
-          <details open className="group">
-            <summary className="mb-2 cursor-pointer text-sm font-semibold text-neutral-600">접기 / 펼치기</summary>
+          <div>
             <div className="space-y-6">
               {foodNotes.map((n) => (
                 <div key={n.video_id}>
@@ -84,7 +83,7 @@ function Detail({ d }: { d: RestaurantDetail }) {
             <p className="mt-3 text-xs leading-relaxed text-neutral-400">
               메뉴를 누르면 그 장면부터 재생돼요. 시각은 자막에서 추정한 값이라 실제 화면과 몇 초 차이가 날 수 있어요. 메뉴별 맛 후기는 저장하지 않아 조리 특징 설명만 보여 줘요.
             </p>
-          </details>
+          </div>
         ) : (
           <p className="rounded-xl bg-sky-50 px-4 py-3 text-sm text-sky-800">이 식당은 영상 속 메뉴 정보가 아직 없어요.</p>
         )}

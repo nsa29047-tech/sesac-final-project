@@ -1,0 +1,6 @@
+# 컨테이너(리눅스)에서 실행되는 파일은 윈도우에서 체크아웃해도 줄바꿈이 LF 로 유지되어야 한다
+# (CRLF 가 섞이면 셸 스크립트가 "bad interpreter" 로 실패한다)
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf
+compose.yaml text eol=lf

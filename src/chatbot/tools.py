@@ -70,7 +70,7 @@ class FilterArgs(BaseModel):
     open_time: Optional[str] = Field(None, description="'HH:MM' (식당 현지 시간). 이 요일·시각에 영업 중인 식당만. 휴무 요일 자체를 물으면 open_time은 '12:00'처럼 낮 시간을 준다")
     near_lat: Optional[float] = Field(None, description="반경 검색 기준 위도 (geocode_place 결과)")
     near_lng: Optional[float] = Field(None, description="반경 검색 기준 경도")
-    radius_km: Optional[float] = Field(None, gt=0, le=50, description="city·near_lat/near_lng 기준 반경(km). 비우면 도시는 20km, 역·랜드마크는 3km, 강·하천은 강변 1km. 사용자가 거리를 말했을 때만 지정한다")
+    radius_km: Optional[float] = Field(None, gt=0, le=50, description="city·near_lat/near_lng 기준 반경(km). 비우면 도시는 20km, 역·랜드마크는 1.5km, 강·하천은 강변 1km. 사용자가 거리를 말했을 때만 지정한다")
     _near_ids: Optional[List[int]] = PrivateAttr(default=None)   # city가 강·하천이면 강변 반경 안의 식당 id (모델에는 노출하지 않는다)
 
 
@@ -393,7 +393,7 @@ def resolve_city(f: FilterArgs):
         return dumps(g)
     f.near_lat, f.near_lng = g["lat"], g["lng"]
     if f.radius_km is None:
-        f.radius_km = 20.0 if g["is_area"] else 3.0
+        f.radius_km = 20.0 if g["is_area"] else 1.5
     return None
 
 

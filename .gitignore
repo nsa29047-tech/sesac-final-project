@@ -235,3 +235,6 @@ parse_apis/src/parse_apis/*
 PR_DESCRIPTION.md
 presentation_script.md
 resume_project.md
+
+# Docker 스택(compose.yaml)용 비밀번호·키. docker/stack.env.example 을 복사해 채운다(커밋 금지)
+docker/stack.env

@@ -8,6 +8,26 @@
 
 > 실행에는 각자의 API 키와 DB가 필요합니다(데이터는 저장소에 포함하지 않습니다).
 
+### 화면
+
+**1. 로그인·회원가입** — Spring 서버가 JWT로 인증하고, 대화 기록은 계정별로 저장합니다.
+
+![로그인 화면](docs/images/01-login.png)
+
+**2. 첫 화면** — 로그인하면 예시 질문 카드가 나옵니다. 왼쪽 위 버튼으로 지난 대화를 다시 열 수 있습니다.
+
+![로그인 직후 첫 화면](docs/images/02-home.png)
+
+**3. 질문과 추천 결과** — "한강 근처 미슐랭 스타 식당 중에 코스 요리로 즐길 수 있는 곳 알려줘"처럼 지역·미슐랭·코스 조건이 겹친 질문에 답하고, 추천 식당을 카드와 지도(번호 마커)로 보여 줍니다. 답변 위의 칩은 챗봇이 적용한 검색 조건입니다.
+
+![채팅과 지도: 한강 근처 미슐랭 코스 식당 추천](docs/images/03-chat-map.png)
+
+**4. 식당 상세** — 위 결과에서 가겐을 선택한 화면입니다. 영상 속 셰프 소개와 메뉴 타임라인이 있고, 메뉴를 누르면 그 장면부터 재생됩니다.
+
+![식당 상세 팝업: 셰프 정보와 영상 메뉴 타임라인](docs/images/04-detail.png)
+
+> 화면의 셰프 소개와 메뉴 설명은 영상 속 이야기를 정리한 것이라 검증된 사실이 아닙니다. 응답은 실행마다 조금 달라질 수 있습니다.
+
 ## 프로젝트 소개와 역할
 
 SeSAC 서초캠퍼스 *LLM Agent를 활용한 서비스 기획 및 제작 과정*의 최종 프로젝트입니다. 2인 팀으로 2026-09-21~10-12(약 3주) 진행했고, 종료 후 개인 확장으로 챗봇과 웹 서비스까지 이어서 구현했습니다.
@@ -110,20 +130,36 @@ flowchart LR
 
 - 메뉴 환각·누락은 정답 기준이 없어 전수 검증하지 못했습니다.
 - Gemini 영상 분석은 2026년 자동 자막 영상까지 적용했고, 2025년 23개·2024년 11개가 남았습니다.
-- 웹은 로컬 데모입니다(인증·요청 제한 없음, 서버 재시작 시 대화 기억 소실, 대화 기록 미저장).
+- 웹은 로컬 데모입니다(요청 제한 없음, 챗봇 서버 재시작 시 대화 기억 소실). 로그인·대화 기록 저장은 Spring 서버가 맡습니다.
 - n8n 자동화는 수동 자막 경로를 end-to-end로 확인했고 스케줄은 활성화하지 않았습니다.
 - 벡터 검색(`recommend_by_taste`)은 후보 8개 안에서만 고르며 전체 건수·이어 조회를 지원하지 않습니다.
 
 ## 실행 방법
 
+### 전체 스택 (Docker, 권장)
+
+DB(스냅샷 복사본)·챗봇 API·Spring 서버·웹을 명령 하나로 띄웁니다.
+
 ```bash
-uv sync                                    # 의존성 설치
-# .env 파일에 아래 환경변수를 작성
-uv run python src/api/chat_server.py       # 챗봇 API  http://127.0.0.1:8000
-npm --prefix web install && npm --prefix web run dev   # 웹  http://localhost:3000
+cp docker/stack.env.example docker/stack.env      # 비밀번호·JWT_SECRET·OpenAI/Places 키를 채운다(git 제외)
+docker compose --env-file docker/stack.env up -d --build   # http://localhost:3000 에서 가입 후 사용
+docker compose --env-file docker/stack.env down            # 내리기(데이터 유지)
+```
+
+`--env-file`을 빼면 `stack.env`를 읽지 않아 비밀번호·`JWT_SECRET`이 비었다는 오류가 납니다. 첫 기동은 DB 복원 때문에 몇 분 걸립니다. DB 스냅샷(`data/db_snapshot/public.sql`)은 `uv run python src/db/export_snapshot.py`로 만듭니다. Docker 명령 설명과 문제 해결은 [Docker 사용법](docs/DOCKER_USAGE.md)을 봅니다.
+
+### 챗봇만 (로컬 Python)
+
+`.env`에 환경변수를 작성한 뒤 실행합니다. Supabase(또는 구축한 Postgres)에 직접 연결합니다.
+
+```bash
+uv sync                                                        # 의존성 설치
 uv run python src/chatbot/cli.py --trace "강남역 근처 일식집"   # 터미널 챗봇
+uv run streamlit run src/streamlit_app.py                      # Streamlit UI
 uv run python src/chatbot/eval/run_eval.py --no-geo            # 평가셋
 ```
+
+`src/api/chat_server.py`(챗봇 API, 8000)와 `web/`(`npm --prefix web run dev`)을 따로 띄울 수도 있지만, 웹은 챗봇 API가 아니라 Spring 서버(8081)를 호출하므로 로그인까지 쓰려면 Docker 스택을 권장합니다.
 
 필수 환경변수(이름만): `OPENAI_API_KEY`, `GOOGLE_PLACES_API_KEY`, `MICHELIN_GUIDE_API_KEY`, `GEMINI_API_KEY`, `POSTGRES_URI`, `READONLY_POSTGRES_URI`. 전체 목록과 DB 구축·파이프라인 실행 순서는 [개발 문서](docs/DEVELOPMENT.md)를 봅니다. `data/`와 `.env`는 저장소에 포함되지 않으므로 DB를 새로 구축해야 챗봇이 동작합니다.
 

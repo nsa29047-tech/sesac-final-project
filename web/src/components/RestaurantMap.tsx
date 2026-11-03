@@ -1,10 +1,10 @@
 "use client";
 
 // 추천 식당을 번호 마커로 찍는 지도(Leaflet + OpenStreetMap 타일, API 키 불필요). 브라우저에서만 동작하므로 MapSection 이 ssr:false 로 불러온다.
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
+import { MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import type { Restaurant } from "@/lib/types";
 import { michelinBadge, shortRegion } from "@/lib/format";
 
@@ -14,7 +14,7 @@ interface Pin {
   pos: [number, number];
 }
 
-function pinIcon(n: number | null, single: boolean) {
+function pinIcon(n: number | null, single: boolean, dx = 0, dy = 0) {
   if (n === null) {
     return L.divIcon({ className: "", html: `<div class="map-pin-dim"></div>`, iconSize: [16, 16], iconAnchor: [8, 8], popupAnchor: [0, -8] });
   }
@@ -22,8 +22,8 @@ function pinIcon(n: number | null, single: boolean) {
     className: "",
     html: `<div class="map-pin${single ? " map-pin-one" : ""}">${single ? "●" : n}</div>`,
     iconSize: [30, 30],
-    iconAnchor: [15, 15],
-    popupAnchor: [0, -14],
+    iconAnchor: [15 - dx, 15 - dy], // 겹친 마커는 화면에서 옆으로 벌려 놓는다
+    popupAnchor: [dx, dy - 14],
   });
 }
 
@@ -44,6 +44,79 @@ function FitBounds({ pins }: { pins: Pin[] }) {
   return null;
 }
 
+/** 현재 배율에서 화면상 30px 안에 몰린 번호 마커를 원형으로 벌릴 픽셀 오프셋(같은 도시의 식당이 한 점처럼 겹쳐 보이는 문제). */
+function spreadOffsets(map: L.Map, pins: Pin[]): Map<number, [number, number]> {
+  const out = new Map<number, [number, number]>();
+  const numbered = pins.filter((p) => p.n !== null);
+  const pts = numbered.map((p) => map.latLngToLayerPoint(p.pos));
+  const used = new Set<number>();
+  numbered.forEach((_, i) => {
+    if (used.has(i)) return;
+    const group = [i];
+    used.add(i);
+    pts.forEach((pt, j) => {
+      if (!used.has(j) && pts[i].distanceTo(pt) < 30) {
+        group.push(j);
+        used.add(j);
+      }
+    });
+    if (group.length < 2) return;
+    const radius = group.length === 2 ? 17 : 22;
+    group.forEach((k, idx) => {
+      const a = (2 * Math.PI * idx) / group.length + (group.length === 2 ? Math.PI : -Math.PI / 2);
+      out.set(numbered[k].r.restaurant_id, [Math.round(radius * Math.cos(a)), Math.round(radius * Math.sin(a))]);
+    });
+  });
+  return out;
+}
+
+function Pins({ pins, onDetail }: { pins: Pin[]; onDetail?: (r: Restaurant) => void }) {
+  const map = useMap();
+  const [zoom, setZoom] = useState(() => map.getZoom());
+  useMapEvents({ zoomend: () => setZoom(map.getZoom()) });
+  const offsets = useMemo(() => spreadOffsets(map, pins), [map, pins, zoom]); // eslint-disable-line react-hooks/exhaustive-deps -- 배율이 바뀌면 화면 거리가 달라져 다시 계산한다
+  const numberedCount = pins.filter((p) => p.n !== null).length;
+  return (
+    <>
+      {pins.map(({ r, n, pos }) => {
+        const [dx, dy] = offsets.get(r.restaurant_id) ?? [0, 0];
+        return (
+          <Marker key={r.restaurant_id} position={pos} icon={pinIcon(n, numberedCount === 1 && pins.length === 1, dx, dy)} zIndexOffset={n === null ? -1000 : 0}>
+            <Popup>
+              <div className="min-w-[170px] leading-normal">
+                <b className="text-sm text-neutral-900">
+                  {n !== null && pins.length > 1 ? `${n}. ` : ""}
+                  {r.name}
+                </b>
+                {shortRegion(r.region) && <div className="text-xs text-neutral-500">{shortRegion(r.region)}</div>}
+                {r.michelin && <div className="text-xs font-bold text-red-700">{michelinBadge(r.michelin.label)}</div>}
+                {r.rating != null && <div className="text-[12.5px] font-bold text-brand">★ {r.rating}</div>}
+                <div className="mt-1.5 flex gap-1.5">
+                  {r.videos[0] && (
+                    <a href={r.videos[0].url} target="_blank" rel="noreferrer" className="map-popup-link">
+                      영상 보기
+                    </a>
+                  )}
+                  {r.google_maps_url && (
+                    <a href={r.google_maps_url} target="_blank" rel="noreferrer" className="map-popup-link">
+                      지도
+                    </a>
+                  )}
+                </div>
+                {onDetail && (
+                  <button type="button" onClick={() => onDetail(r)} className="mt-2 w-full rounded-full bg-brand py-1.5 text-xs font-bold text-white hover:bg-brand-dark">
+                    상세 정보 보기
+                  </button>
+                )}
+              </div>
+            </Popup>
+          </Marker>
+        );
+      })}
+    </>
+  );
+}
+
 export default function RestaurantMap({ restaurants, extra = [], onDetail }: { restaurants: Restaurant[]; extra?: Restaurant[]; onDetail?: (r: Restaurant) => void }) {
   // 번호는 카드 번호와 같아야 하므로 좌표가 없는 식당이 있어도 원래 순서를 유지한다
   // restaurants 가 그대로면 pins 도 그대로여야 한다(새로 만들면 채팅이 갱신될 때마다 지도가 다시 맞춰져 사용자가 옮긴 위치가 풀린다)
@@ -61,44 +134,12 @@ export default function RestaurantMap({ restaurants, extra = [], onDetail }: { r
     return [...dim, ...numbered]; // 번호 마커가 회색 점 위에 그려지도록 뒤에 둔다
   }, [restaurants, extra]);
   if (pins.length === 0) return null;
-  const numberedCount = pins.filter((p) => p.n !== null).length;
 
   return (
     <MapContainer center={pins[0].pos} zoom={13} scrollWheelZoom={false} className="h-80 w-full rounded-2xl">
       <TileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxZoom={19} />
       <FitBounds pins={pins} />
-      {pins.map(({ r, n, pos }) => (
-        <Marker key={r.restaurant_id} position={pos} icon={pinIcon(n, numberedCount === 1 && pins.length === 1)} zIndexOffset={n === null ? -1000 : 0}>
-          <Popup>
-            <div className="min-w-[170px] leading-normal">
-              <b className="text-sm text-neutral-900">
-                {n !== null && pins.length > 1 ? `${n}. ` : ""}
-                {r.name}
-              </b>
-              {shortRegion(r.region) && <div className="text-xs text-neutral-500">{shortRegion(r.region)}</div>}
-              {r.michelin && <div className="text-xs font-bold text-red-700">{michelinBadge(r.michelin.label)}</div>}
-              {r.rating != null && <div className="text-[12.5px] font-bold text-brand">★ {r.rating}</div>}
-              <div className="mt-1.5 flex gap-1.5">
-                {r.videos[0] && (
-                  <a href={r.videos[0].url} target="_blank" rel="noreferrer" className="map-popup-link">
-                    영상 보기
-                  </a>
-                )}
-                {r.google_maps_url && (
-                  <a href={r.google_maps_url} target="_blank" rel="noreferrer" className="map-popup-link">
-                    지도
-                  </a>
-                )}
-              </div>
-              {onDetail && (
-                <button type="button" onClick={() => onDetail(r)} className="mt-2 w-full rounded-full bg-brand py-1.5 text-xs font-bold text-white hover:bg-brand-dark">
-                  상세 정보 보기
-                </button>
-              )}
-            </div>
-          </Popup>
-        </Marker>
-      ))}
+      <Pins pins={pins} onDetail={onDetail} />
     </MapContainer>
   );
 }
