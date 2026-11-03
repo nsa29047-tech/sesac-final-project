@@ -33,8 +33,12 @@ function FitBounds({ pins }: { pins: Pin[] }) {
   useEffect(() => {
     const fit = () => {
       map.invalidateSize();
-      if (pins.length === 1) map.setView(pins[0].pos, 15);
-      else map.fitBounds(L.latLngBounds(pins.map((p) => p.pos)), { padding: [30, 30], maxZoom: 16 });
+      // 주변 지형(한강 같은 강·큰 도로)이 보이도록 마커가 꽉 차는 배율보다 한 단계 멀리서 시작한다
+      if (pins.length === 1) map.setView(pins[0].pos, 14);
+      else {
+        const bounds = L.latLngBounds(pins.map((p) => p.pos));
+        map.setView(bounds.getCenter(), Math.min(map.getBoundsZoom(bounds, false, L.point(30, 30)) - 1, 15));
+      }
     };
     fit();
     const observer = new ResizeObserver(fit);

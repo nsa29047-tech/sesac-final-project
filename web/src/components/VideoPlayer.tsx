@@ -55,6 +55,7 @@ export default function VideoPlayer({ videoId, url, menus }: { videoId: string; 
   const playerRef = useRef<YTPlayer | null>(null);
   const [failed, setFailed] = useState(false);
   const [current, setCurrent] = useState(-1);
+  const [open, setOpen] = useState(true);
 
   // 시각이 있는 음식은 시각순, 시각이 없는 음식은 뒤에(원래 순서)
   const items: Item[] = useMemo(
@@ -123,8 +124,9 @@ export default function VideoPlayer({ videoId, url, menus }: { videoId: string; 
 
   return (
     <div>
+      {/* 플레이어와 접기/펼치기 버튼을 함께 고정한다. 창이 낮아도 버튼이 스크롤로 가려지지 않게 플레이어 높이는 화면의 42%까지만 쓴다 */}
       <div className="sticky top-16 z-10 bg-white pb-2">
-        <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
+        <div className="relative mx-auto aspect-video w-full max-w-[calc(42vh*16/9)] overflow-hidden rounded-xl bg-black">
           <div ref={hostRef} className="absolute inset-0 [&_iframe]:h-full [&_iframe]:w-full" />
           {failed && (
             <p className="absolute inset-0 flex items-center justify-center p-4 text-center text-sm leading-relaxed text-white">
@@ -137,9 +139,19 @@ export default function VideoPlayer({ videoId, url, menus }: { videoId: string; 
             </p>
           )}
         </div>
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+          className="mt-2 flex w-full cursor-pointer items-center justify-between rounded-lg bg-neutral-100 px-3 py-2 text-sm font-semibold text-neutral-700"
+        >
+          <span>메뉴 타임라인 ({items.length})</span>
+          <span className="text-xs text-neutral-500">{open ? "접기 ▴" : "펼치기 ▾"}</span>
+        </button>
       </div>
 
-      <ol className="mt-1 border-l-2 border-brand-line">
+      {open && (
+      <ol className="mt-2 border-l-2 border-brand-line">
         {items.map((it, i) => {
           const body = (
             <>
@@ -175,6 +187,7 @@ export default function VideoPlayer({ videoId, url, menus }: { videoId: string; 
           );
         })}
       </ol>
+      )}
     </div>
   );
 }
